@@ -17,6 +17,7 @@ Telegram username: `memento_meta_bot`
 ## MVP Scope
 
 - Quick notes.
+- Saved Messages-style text capture.
 - Today tasks.
 - Task completion.
 - Eisenhower matrix for task prioritization.
@@ -41,6 +42,7 @@ Telegram username: `memento_meta_bot`
 ## Time Management Methods
 
 - Eisenhower matrix: important/urgent task sorting.
+- Telegram Web App matrix: visual 2x2 task board.
 
 ## Version 2 Direction
 
@@ -49,6 +51,21 @@ Telegram username: `memento_meta_bot`
 - Animated focus progress message.
 - Manual focus finish/cancel actions.
 - Protection from running several focus sessions at the same time.
+- Saved notes screen.
+- Deleting saved notes.
+- Weekly review with a suggested next step.
+
+## Telegram Web App
+
+The matrix can run as a Telegram Web App.
+
+Set this variable in Railway:
+
+```bash
+WEBAPP_URL=https://your-railway-domain.up.railway.app
+```
+
+The bot process also starts an HTTP server on `PORT`, so Railway should run it as a `web` process.
 
 ## Run Locally
 

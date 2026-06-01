@@ -119,6 +119,16 @@ async def add_note(user_id: int, body: str) -> int:
         return int(cursor.lastrowid)
 
 
+async def delete_note(user_id: int, note_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM notes WHERE id = ? AND user_id = ?",
+            (note_id, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def add_task(user_id: int, title: str) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(

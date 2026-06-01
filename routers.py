@@ -10,17 +10,21 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from bot import bot
+from config import WEBAPP_URL
 from db import (
     add_note,
     add_task,
     cancel_focus_session,
     complete_task,
+    delete_note,
     ensure_user,
     finish_focus_session,
     get_daily_summary,
     get_active_focus_session,
     get_matrix_tasks,
+    get_next_action_task,
     get_open_tasks,
+    get_period_summary,
     get_recent_notes,
     start_focus_session,
     update_task_matrix,
@@ -29,6 +33,8 @@ from keyboards import (
     BTN_CAPTURE,
     BTN_FOCUS,
     BTN_MATRIX,
+    BTN_REVIEW,
+    BTN_SAVED,
     BTN_SUMMARY,
     BTN_TODAY,
     active_focus_keyboard,
@@ -37,6 +43,7 @@ from keyboards import (
     main_keyboard,
     matrix_choice_keyboard,
     matrix_tasks_keyboard,
+    saved_notes_keyboard,
     task_actions_keyboard,
     today_tasks_keyboard,
 )
@@ -53,6 +60,12 @@ FOCUS_METHOD_HINTS = {
 
 FOCUS_FRAMES = ["·", "∙", "●", "∙"]
 
+DAY_BAR = "▁▂▃▄▅▆▇█"
+
+
+def is_command_text(text: str) -> bool:
+    return text.strip().startswith("/")
+
 
 class CaptureState(StatesGroup):
     wait_text = State()
@@ -66,7 +79,8 @@ async def start(message: types.Message, state: FSMContext):
     name = message.from_user.first_name or "друг"
     await message.answer(
         f"Привет, {escape(name)}.\n\n"
-        "Я Noto Memento. Помогу быстро записывать мысли, держать задачи на сегодня и запускать фокус-сессии.",
+        "Я Noto Memento. Это как «Избранное» в Telegram, только для мыслей, задач и фокуса.\n\n"
+        "Просто отправь текст — я сохраню его. Для задачи используй /task.",
         reply_markup=main_keyboard,
     )
 
@@ -79,7 +93,14 @@ async def help_command(message: types.Message):
         "📅 Сегодня — показать открытые задачи и свежие заметки.\n"
         "🎯 Фокус — запустить или проверить рабочую сессию.\n"
         "🧭 Матрица — разнести задачи по Эйзенхауэру.\n"
-        "📊 Итог — короткий итог дня."
+        "🗂 Сохранённое — последние записи.\n"
+        "📊 Итог — короткий итог дня.\n"
+        "🧾 Обзор — неделя и следующий шаг.\n\n"
+        "Быстро:\n"
+        "/task текст — добавить задачу.\n"
+        "/note текст — сохранить заметку.\n"
+        "/saved — открыть сохранённое.\n"
+        "/review — обзор недели."
     )
 
 
@@ -89,7 +110,8 @@ async def settings(message: types.Message):
         "Настроек пока немного.\n\n"
         "Язык: русский\n"
         "Фокус-методы: Pomodoro, Short Focus, Deep Work\n"
-        "Методы планирования: матрица Эйзенхауэра"
+        "Методы планирования: матрица Эйзенхауэра\n"
+        "Свободный текст: сразу сохраняется, как в «Избранном»"
     )
 
 
@@ -155,11 +177,19 @@ async def handle_navigation_during_capture(message: types.Message, state: FSMCon
         await state.clear()
         await summary(message)
         return True
+    if text == BTN_REVIEW:
+        await state.clear()
+        await review(message)
+        return True
+    if text == BTN_SAVED:
+        await state.clear()
+        await saved(message)
+        return True
     if text == BTN_CAPTURE:
         await capture_start(message, state)
         return True
 
-    if not text.startswith("/"):
+    if not is_command_text(text):
         return False
 
     command = text.split(maxsplit=1)[0].lower()
@@ -183,6 +213,10 @@ async def handle_navigation_during_capture(message: types.Message, state: FSMCon
         await today(message)
     elif command == "/summary":
         await summary(message)
+    elif command == "/review":
+        await review(message)
+    elif command == "/saved":
+        await saved(message)
     else:
         await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
 
@@ -245,8 +279,19 @@ async def build_today_view(user_id: int):
     tasks = await get_open_tasks(user_id, limit=7)
     notes = await get_recent_notes(user_id, limit=3)
     summary = await get_daily_summary(user_id)
+    next_task = await get_next_action_task(user_id)
+    active_focus = await get_active_focus_session(user_id)
 
     lines = ["📅 <b>Сегодня</b>", ""]
+
+    if active_focus:
+        lines.append(f"🎯 Идёт фокус: <b>{escape(active_focus.method)}</b>")
+        lines.append("")
+
+    if next_task:
+        lines.append("<b>Следующий шаг</b>")
+        lines.append(f"{matrix_badge(next_task)} {escape(next_task.title)}")
+        lines.append("")
 
     if tasks:
         lines.append("<b>Задачи</b>")
@@ -270,6 +315,78 @@ async def build_today_view(user_id: int):
     )
 
     return "\n".join(lines), today_tasks_keyboard(tasks)
+
+
+@router.message(F.text == BTN_SAVED)
+@router.message(Command("saved"))
+async def saved(message: types.Message):
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    notes = await get_recent_notes(message.from_user.id, limit=12)
+
+    if not notes:
+        await message.answer(
+            "🗂 <b>Сохранённое</b>\n\n"
+            "Пока пусто. Просто отправь мне текст, и я сохраню его сюда.",
+            parse_mode="HTML",
+        )
+        return
+
+    lines = ["🗂 <b>Сохранённое</b>", ""]
+    for index, note in enumerate(notes, start=1):
+        preview = note.body if len(note.body) <= 120 else note.body[:117] + "..."
+        lines.append(f"{index}. {escape(preview)}")
+
+    lines.extend([
+        "",
+        "Чтобы сделать задачу: <code>/task текст задачи</code>",
+    ])
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=saved_notes_keyboard(notes),
+    )
+
+
+@router.callback_query(F.data.startswith("note_delete:"))
+async def note_delete(callback: types.CallbackQuery):
+    note_id = int(callback.data.split(":", 1)[1])
+    deleted = await delete_note(callback.from_user.id, note_id)
+
+    if not deleted:
+        await callback.answer("Заметка уже удалена или не найдена.", show_alert=True)
+        return
+
+    notes = await get_recent_notes(callback.from_user.id, limit=12)
+    if not notes:
+        await callback.message.edit_text(
+            "🗂 <b>Сохранённое</b>\n\nПока пусто.",
+            parse_mode="HTML",
+        )
+    else:
+        lines = ["🗂 <b>Сохранённое</b>", ""]
+        for index, note in enumerate(notes, start=1):
+            preview = note.body if len(note.body) <= 120 else note.body[:117] + "..."
+            lines.append(f"{index}. {escape(preview)}")
+        lines.extend(["", "Чтобы сделать задачу: <code>/task текст задачи</code>"])
+        await callback.message.edit_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=saved_notes_keyboard(notes),
+        )
+
+    await callback.answer("Удалено.")
+
+
+def matrix_badge(task) -> str:
+    if task.important is True and task.urgent is True:
+        return "🔥"
+    if task.important is True and task.urgent is False:
+        return "📌"
+    if task.important is False and task.urgent is True:
+        return "⚡"
+    if task.important is False and task.urgent is False:
+        return "🧹"
+    return "▫️"
 
 
 async def build_matrix_view(user_id: int):
@@ -297,15 +414,21 @@ async def build_matrix_view(user_id: int):
 
     lines = [
         "🧭 <b>Матрица Эйзенхауэра</b>",
-        "Разложи задачи по важности и срочности. Так проще понять, что делать сейчас, что планировать, а что убрать.",
+        "Выбери, что делать сейчас, что поставить в план, а что убрать из головы.",
         "",
-        format_matrix_group("1. Сделать сейчас", groups["do"], "важно и срочно"),
+        "<pre>"
+        "                 СРОЧНО        НЕ СРОЧНО\n"
+        f"ВАЖНО       {matrix_cell('СДЕЛАТЬ', groups['do'])} {matrix_cell('ПЛАН', groups['plan'])}\n"
+        f"НЕ ВАЖНО    {matrix_cell('ДЕЛЕГ.', groups['delegate'])} {matrix_cell('УБРАТЬ', groups['drop'])}"
+        "</pre>",
         "",
-        format_matrix_group("2. Запланировать", groups["plan"], "важно, не срочно"),
+        format_matrix_details("🔥 Сделать сейчас", groups["do"]),
         "",
-        format_matrix_group("3. Делегировать", groups["delegate"], "срочно, не важно"),
+        format_matrix_details("📌 Запланировать", groups["plan"]),
         "",
-        format_matrix_group("4. Убрать", groups["drop"], "не важно и не срочно"),
+        format_matrix_details("⚡ Делегировать", groups["delegate"]),
+        "",
+        format_matrix_details("🧹 Убрать", groups["drop"]),
     ]
 
     if groups["unknown"]:
@@ -322,7 +445,7 @@ async def build_matrix_view(user_id: int):
             "Открытых задач пока нет. Добавь задачу через /task или кнопку 📝 Записать.",
         ]
 
-    return "\n".join(lines), matrix_tasks_keyboard(tasks)
+    return "\n".join(lines), matrix_tasks_keyboard(tasks, WEBAPP_URL or None)
 
 
 def format_matrix_group(title: str, tasks, hint: str) -> str:
@@ -334,6 +457,23 @@ def format_matrix_group(title: str, tasks, hint: str) -> str:
         task_lines.append(f"…ещё {len(tasks) - 6}")
 
     return f"<b>{title}</b>\n<i>{hint}</i>\n" + "\n".join(task_lines)
+
+
+def matrix_cell(title: str, tasks) -> str:
+    return f"{title}:{len(tasks):>2}"
+
+
+def format_matrix_details(title: str, tasks) -> str:
+    if not tasks:
+        return f"<b>{title}</b>\n—"
+
+    task_lines = []
+    for task in tasks[:5]:
+        task_lines.append(f"• {escape(task.title)}")
+    if len(tasks) > 5:
+        task_lines.append(f"…ещё {len(tasks) - 5}")
+
+    return f"<b>{title}</b>\n" + "\n".join(task_lines)
 
 
 @router.callback_query(F.data.startswith("task_done:"))
@@ -550,16 +690,101 @@ async def summary(message: types.Message):
     )
 
 
+@router.message(F.text == BTN_REVIEW)
+@router.message(Command("review"))
+async def review(message: types.Message):
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    data = await get_period_summary(message.from_user.id, days=7)
+    next_task = await get_next_action_task(message.from_user.id)
+
+    await message.answer(
+        build_review_text(data, next_task),
+        parse_mode="HTML",
+    )
+
+
+def build_review_text(data: dict, next_task) -> str:
+    done = data["done_tasks"]
+    created = data["created_tasks"]
+    focus = data["focus_minutes"]
+    notes = data["notes"]
+    avg_focus = round(focus / data["days"]) if data["days"] else 0
+    completion = round(done / created * 100) if created else 0
+
+    bars = build_week_bars(data["daily"])
+    insight = review_insight(done, created, focus, notes)
+
+    lines = [
+        "🧾 <b>Обзор недели</b>",
+        "",
+        f"Задачи: <b>{done}</b> выполнено из <b>{created}</b> созданных",
+        f"Выполнение: <b>{completion}%</b>",
+        f"Фокус: <b>{focus} мин</b> · в среднем {avg_focus} мин/день",
+        f"Заметки: <b>{notes}</b>",
+        "",
+        f"<code>{bars}</code>",
+        "",
+        f"Вывод: {insight}",
+    ]
+
+    if next_task:
+        lines.extend([
+            "",
+            "<b>Следующий шаг</b>",
+            f"{matrix_badge(next_task)} {escape(next_task.title)}",
+        ])
+
+    return "\n".join(lines)
+
+
+def build_week_bars(daily: list[dict]) -> str:
+    values = [day["done_tasks"] + day["focus_minutes"] // 25 for day in daily]
+    max_value = max(values, default=0)
+
+    if max_value == 0:
+        return " ".join("·" for _ in daily)
+
+    bars = []
+    for value in values:
+        index = min(len(DAY_BAR) - 1, round(value / max_value * (len(DAY_BAR) - 1)))
+        bars.append(DAY_BAR[index])
+
+    return " ".join(bars)
+
+
+def review_insight(done: int, created: int, focus: int, notes: int) -> str:
+    if done == 0 and focus == 0 and notes == 0:
+        return "неделя пока пустая. Начни с одной маленькой задачи или короткого фокуса."
+    if focus >= 180 and done >= 5:
+        return "хороший рабочий ритм. Сохраняй темп, но не забивай день задачами до краёв."
+    if created > done * 2 and created >= 4:
+        return "задач появляется больше, чем закрывается. Поможет матрица: оставь главное наверху."
+    if notes > done and focus < 60:
+        return "идей много, фокуса мало. Выбери одну заметку и преврати её в задачу."
+    if focus < 45:
+        return "добавь хотя бы одну короткую фокус-сессию. 15 минут уже достаточно."
+    return "нормальная неделя. Следующий рост — меньше распыления и один главный шаг в день."
+
+
+@router.message(F.text.startswith("/"))
+async def unknown_command(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
+
+
 @router.message()
 async def free_text(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
+    text = (message.text or message.caption or "").strip()
     if not text:
+        await message.answer("Пока сохраняю только текст. Отправь мысль сообщением — я положу её в сохранённое.")
         return
-    if text.startswith("/"):
+    if await handle_navigation_during_capture(message, state, text):
+        return
+    if is_command_text(text):
         await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
         return
 
     await state.clear()
     await ensure_user(message.from_user.id, message.from_user.first_name)
     await add_note(message.from_user.id, text)
-    await message.answer("Записал как заметку.")
+    await message.answer("Сохранено.")

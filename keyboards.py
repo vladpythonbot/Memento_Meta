@@ -3,6 +3,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 
@@ -11,12 +12,15 @@ BTN_TODAY = "📅 Сегодня"
 BTN_FOCUS = "🎯 Фокус"
 BTN_MATRIX = "🧭 Матрица"
 BTN_SUMMARY = "📊 Итог"
+BTN_REVIEW = "🧾 Обзор"
+BTN_SAVED = "🗂 Сохранённое"
 
 
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_CAPTURE), KeyboardButton(text=BTN_TODAY)],
         [KeyboardButton(text=BTN_FOCUS), KeyboardButton(text=BTN_MATRIX)],
+        [KeyboardButton(text=BTN_SAVED), KeyboardButton(text=BTN_REVIEW)],
         [KeyboardButton(text=BTN_SUMMARY)],
     ],
     resize_keyboard=True,
@@ -69,15 +73,30 @@ def matrix_choice_keyboard(task_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def matrix_tasks_keyboard(tasks) -> InlineKeyboardMarkup | None:
-    if not tasks:
-        return None
-
+def matrix_tasks_keyboard(tasks, webapp_url: str | None = None) -> InlineKeyboardMarkup | None:
     rows = []
+
+    if webapp_url:
+        rows.append([InlineKeyboardButton(text="Открыть красивую матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix"))])
+
+    if not tasks:
+        return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
     for task in tasks[:10]:
         title = task.title if len(task.title) <= 28 else task.title[:25] + "..."
         prefix = "Разнести" if task.important is None or task.urgent is None else "Изменить"
         rows.append([InlineKeyboardButton(text=f"{prefix} · {title}", callback_data=f"matrix_pick:{task.id}")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def saved_notes_keyboard(notes) -> InlineKeyboardMarkup | None:
+    if not notes:
+        return None
+
+    rows = []
+    for index, note in enumerate(notes[:10], start=1):
+        rows.append([InlineKeyboardButton(text=f"Удалить #{index}", callback_data=f"note_delete:{note.id}")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
