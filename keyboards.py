@@ -1,0 +1,103 @@
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
+
+
+BTN_CAPTURE = "📝 Записать"
+BTN_TODAY = "📅 Сегодня"
+BTN_FOCUS = "🎯 Фокус"
+BTN_MATRIX = "🧭 Матрица"
+BTN_SUMMARY = "📊 Итог"
+
+
+main_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BTN_CAPTURE), KeyboardButton(text=BTN_TODAY)],
+        [KeyboardButton(text=BTN_FOCUS), KeyboardButton(text=BTN_MATRIX)],
+        [KeyboardButton(text=BTN_SUMMARY)],
+    ],
+    resize_keyboard=True,
+)
+
+
+def capture_type_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Заметка", callback_data="capture_note"),
+                InlineKeyboardButton(text="Задача", callback_data="capture_task"),
+            ],
+        ]
+    )
+
+
+def task_actions_keyboard(task_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Готово", callback_data=f"task_done:{task_id}")],
+            [InlineKeyboardButton(text="Матрица", callback_data=f"matrix_pick:{task_id}")],
+        ]
+    )
+
+
+def today_tasks_keyboard(tasks) -> InlineKeyboardMarkup | None:
+    if not tasks:
+        return None
+
+    rows = []
+    for task in tasks[:8]:
+        title = task.title if len(task.title) <= 28 else task.title[:25] + "..."
+        rows.append([
+            InlineKeyboardButton(text=f"Готово · {title}", callback_data=f"task_done:{task.id}"),
+            InlineKeyboardButton(text="Матрица", callback_data=f"matrix_pick:{task.id}"),
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def matrix_choice_keyboard(task_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Важно + срочно", callback_data=f"matrix_set:{task_id}:do")],
+            [InlineKeyboardButton(text="Важно, не срочно", callback_data=f"matrix_set:{task_id}:plan")],
+            [InlineKeyboardButton(text="Срочно, не важно", callback_data=f"matrix_set:{task_id}:delegate")],
+            [InlineKeyboardButton(text="Не важно и не срочно", callback_data=f"matrix_set:{task_id}:drop")],
+        ]
+    )
+
+
+def matrix_tasks_keyboard(tasks) -> InlineKeyboardMarkup | None:
+    if not tasks:
+        return None
+
+    rows = []
+    for task in tasks[:10]:
+        title = task.title if len(task.title) <= 28 else task.title[:25] + "..."
+        prefix = "Разнести" if task.important is None or task.urgent is None else "Изменить"
+        rows.append([InlineKeyboardButton(text=f"{prefix} · {title}", callback_data=f"matrix_pick:{task.id}")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def focus_methods_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Pomodoro · 25 мин", callback_data="focus:Pomodoro:25")],
+            [InlineKeyboardButton(text="Short Focus · 15 мин", callback_data="focus:Short Focus:15")],
+            [InlineKeyboardButton(text="Deep Work · 90 мин", callback_data="focus:Deep Work:90")],
+        ]
+    )
+
+
+def active_focus_keyboard(session_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Завершить", callback_data=f"focus_finish:{session_id}"),
+                InlineKeyboardButton(text="Отменить", callback_data=f"focus_cancel:{session_id}"),
+            ],
+        ]
+    )

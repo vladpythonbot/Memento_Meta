@@ -1,0 +1,565 @@
+import asyncio
+import datetime as dt
+from html import escape
+from types import SimpleNamespace
+
+from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+from bot import bot
+from db import (
+    add_note,
+    add_task,
+    cancel_focus_session,
+    complete_task,
+    ensure_user,
+    finish_focus_session,
+    get_daily_summary,
+    get_active_focus_session,
+    get_matrix_tasks,
+    get_open_tasks,
+    get_recent_notes,
+    start_focus_session,
+    update_task_matrix,
+)
+from keyboards import (
+    BTN_CAPTURE,
+    BTN_FOCUS,
+    BTN_MATRIX,
+    BTN_SUMMARY,
+    BTN_TODAY,
+    active_focus_keyboard,
+    capture_type_keyboard,
+    focus_methods_keyboard,
+    main_keyboard,
+    matrix_choice_keyboard,
+    matrix_tasks_keyboard,
+    task_actions_keyboard,
+    today_tasks_keyboard,
+)
+
+
+router = Router()
+
+
+FOCUS_METHOD_HINTS = {
+    "Pomodoro": "Для обычной задачи, когда нужно мягко войти в работу.",
+    "Short Focus": "Для короткого рывка, если мало сил или много сопротивления.",
+    "Deep Work": "Для большой задачи, где нужна тишина и длинная концентрация.",
+}
+
+FOCUS_FRAMES = ["·", "∙", "●", "∙"]
+
+
+class CaptureState(StatesGroup):
+    wait_text = State()
+
+
+@router.message(Command("start"))
+async def start(message: types.Message, state: FSMContext):
+    await state.clear()
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+
+    name = message.from_user.first_name or "друг"
+    await message.answer(
+        f"Привет, {escape(name)}.\n\n"
+        "Я Noto Memento. Помогу быстро записывать мысли, держать задачи на сегодня и запускать фокус-сессии.",
+        reply_markup=main_keyboard,
+    )
+
+
+@router.message(Command("help"))
+async def help_command(message: types.Message):
+    await message.answer(
+        "Что умею сейчас:\n\n"
+        "📝 Записать — сохранить заметку или задачу.\n"
+        "📅 Сегодня — показать открытые задачи и свежие заметки.\n"
+        "🎯 Фокус — запустить или проверить рабочую сессию.\n"
+        "🧭 Матрица — разнести задачи по Эйзенхауэру.\n"
+        "📊 Итог — короткий итог дня."
+    )
+
+
+@router.message(Command("settings"))
+async def settings(message: types.Message):
+    await message.answer(
+        "Настроек пока немного.\n\n"
+        "Язык: русский\n"
+        "Фокус-методы: Pomodoro, Short Focus, Deep Work\n"
+        "Методы планирования: матрица Эйзенхауэра"
+    )
+
+
+@router.message(Command("note"))
+async def quick_note(message: types.Message):
+    text = message.text.partition(" ")[2].strip() if message.text else ""
+    if not text:
+        await message.answer("Напиши так: <code>/note идея для проекта</code>", parse_mode="HTML")
+        return
+
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    await add_note(message.from_user.id, text)
+    await message.answer("Заметка сохранена.")
+
+
+@router.message(Command("task"))
+async def quick_task(message: types.Message):
+    text = message.text.partition(" ")[2].strip() if message.text else ""
+    if not text:
+        await message.answer("Напиши так: <code>/task разобрать почту</code>", parse_mode="HTML")
+        return
+
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    task_id = await add_task(message.from_user.id, text)
+    await message.answer(
+        f"Задача добавлена:\n\n<b>{escape(text)}</b>",
+        parse_mode="HTML",
+        reply_markup=task_actions_keyboard(task_id),
+    )
+
+
+@router.message(Command("matrix", "eisenhower"))
+@router.message(F.text == BTN_MATRIX)
+async def matrix(message: types.Message):
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    text, reply_markup = await build_matrix_view(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+
+
+@router.message(F.text == BTN_CAPTURE)
+async def capture_start(message: types.Message, state: FSMContext):
+    await state.set_state(CaptureState.wait_text)
+    await message.answer(
+        "Напиши мысль или задачу одним сообщением.\n\n"
+        "После этого выберем, что с ней сделать."
+    )
+
+
+async def handle_navigation_during_capture(message: types.Message, state: FSMContext, text: str) -> bool:
+    if text == BTN_TODAY:
+        await state.clear()
+        await today(message)
+        return True
+    if text == BTN_FOCUS:
+        await state.clear()
+        await focus(message)
+        return True
+    if text == BTN_MATRIX:
+        await state.clear()
+        await matrix(message)
+        return True
+    if text == BTN_SUMMARY:
+        await state.clear()
+        await summary(message)
+        return True
+    if text == BTN_CAPTURE:
+        await capture_start(message, state)
+        return True
+
+    if not text.startswith("/"):
+        return False
+
+    command = text.split(maxsplit=1)[0].lower()
+    await state.clear()
+
+    if command == "/start":
+        await start(message, state)
+    elif command == "/help":
+        await help_command(message)
+    elif command == "/settings":
+        await settings(message)
+    elif command == "/note":
+        await quick_note(message)
+    elif command == "/task":
+        await quick_task(message)
+    elif command in {"/matrix", "/eisenhower"}:
+        await matrix(message)
+    elif command == "/focus":
+        await focus(message)
+    elif command == "/today":
+        await today(message)
+    elif command == "/summary":
+        await summary(message)
+    else:
+        await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
+
+    return True
+
+
+@router.message(CaptureState.wait_text)
+async def capture_text(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if await handle_navigation_during_capture(message, state, text):
+        return
+
+    if len(text) < 2:
+        await message.answer("Слишком коротко. Напиши чуть подробнее.")
+        return
+
+    await state.update_data(captured_text=text)
+    await message.answer(
+        f"Записал:\n\n<b>{escape(text)}</b>\n\n"
+        "Оставляем как заметку или делаем задачей?",
+        parse_mode="HTML",
+        reply_markup=capture_type_keyboard(),
+    )
+
+
+@router.callback_query(F.data.in_({"capture_note", "capture_task"}))
+async def capture_save(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = data.get("captured_text")
+
+    if not text:
+        await callback.answer("Текст не найден. Нажми «Записать» ещё раз.", show_alert=True)
+        await state.clear()
+        return
+
+    if callback.data == "capture_note":
+        await add_note(callback.from_user.id, text)
+        await callback.message.edit_text("Заметка сохранена.")
+    else:
+        task_id = await add_task(callback.from_user.id, text)
+        await callback.message.edit_text(
+            f"Задача добавлена:\n\n<b>{escape(text)}</b>",
+            parse_mode="HTML",
+            reply_markup=task_actions_keyboard(task_id),
+        )
+
+    await state.clear()
+    await callback.answer()
+
+
+@router.message(F.text == BTN_TODAY)
+@router.message(Command("today"))
+async def today(message: types.Message):
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    text, reply_markup = await build_today_view(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+
+
+async def build_today_view(user_id: int):
+    tasks = await get_open_tasks(user_id, limit=7)
+    notes = await get_recent_notes(user_id, limit=3)
+    summary = await get_daily_summary(user_id)
+
+    lines = ["📅 <b>Сегодня</b>", ""]
+
+    if tasks:
+        lines.append("<b>Задачи</b>")
+        for task in tasks:
+            lines.append(f"• {escape(task.title)}")
+    else:
+        lines.append("Задач на сегодня пока нет.")
+
+    if notes:
+        lines.append("")
+        lines.append("<b>Свежие заметки</b>")
+        for note in notes:
+            preview = note.body if len(note.body) <= 70 else note.body[:67] + "..."
+            lines.append(f"• {escape(preview)}")
+
+    lines.append("")
+    lines.append(
+        f"Итог: {summary['done_tasks']} готово · "
+        f"{summary['focus_minutes']} мин фокуса · "
+        f"{summary['notes']} заметок"
+    )
+
+    return "\n".join(lines), today_tasks_keyboard(tasks)
+
+
+async def build_matrix_view(user_id: int):
+    tasks = await get_matrix_tasks(user_id)
+
+    groups = {
+        "do": [],
+        "plan": [],
+        "delegate": [],
+        "drop": [],
+        "unknown": [],
+    }
+
+    for task in tasks:
+        if task.important is True and task.urgent is True:
+            groups["do"].append(task)
+        elif task.important is True and task.urgent is False:
+            groups["plan"].append(task)
+        elif task.important is False and task.urgent is True:
+            groups["delegate"].append(task)
+        elif task.important is False and task.urgent is False:
+            groups["drop"].append(task)
+        else:
+            groups["unknown"].append(task)
+
+    lines = [
+        "🧭 <b>Матрица Эйзенхауэра</b>",
+        "Разложи задачи по важности и срочности. Так проще понять, что делать сейчас, что планировать, а что убрать.",
+        "",
+        format_matrix_group("1. Сделать сейчас", groups["do"], "важно и срочно"),
+        "",
+        format_matrix_group("2. Запланировать", groups["plan"], "важно, не срочно"),
+        "",
+        format_matrix_group("3. Делегировать", groups["delegate"], "срочно, не важно"),
+        "",
+        format_matrix_group("4. Убрать", groups["drop"], "не важно и не срочно"),
+    ]
+
+    if groups["unknown"]:
+        lines.extend([
+            "",
+            "<b>Без квадранта</b>",
+            *[f"• {escape(task.title)}" for task in groups["unknown"][:8]],
+        ])
+
+    if not tasks:
+        lines = [
+            "🧭 <b>Матрица Эйзенхауэра</b>",
+            "",
+            "Открытых задач пока нет. Добавь задачу через /task или кнопку 📝 Записать.",
+        ]
+
+    return "\n".join(lines), matrix_tasks_keyboard(tasks)
+
+
+def format_matrix_group(title: str, tasks, hint: str) -> str:
+    if not tasks:
+        return f"<b>{title}</b>\n<i>{hint}</i>\n—"
+
+    task_lines = [f"• {escape(task.title)}" for task in tasks[:6]]
+    if len(tasks) > 6:
+        task_lines.append(f"…ещё {len(tasks) - 6}")
+
+    return f"<b>{title}</b>\n<i>{hint}</i>\n" + "\n".join(task_lines)
+
+
+@router.callback_query(F.data.startswith("task_done:"))
+async def task_done(callback: types.CallbackQuery):
+    task_id = int(callback.data.split(":", 1)[1])
+    done = await complete_task(callback.from_user.id, task_id)
+
+    if not done:
+        await callback.answer("Задача уже закрыта или не найдена.", show_alert=True)
+        return
+
+    text, reply_markup = await build_today_view(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("matrix_pick:"))
+async def matrix_pick(callback: types.CallbackQuery):
+    task_id = int(callback.data.split(":", 1)[1])
+    await callback.message.edit_text(
+        "Выбери квадрант для задачи.",
+        reply_markup=matrix_choice_keyboard(task_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("matrix_set:"))
+async def matrix_set(callback: types.CallbackQuery):
+    _, raw_task_id, quadrant = callback.data.split(":", 2)
+    task_id = int(raw_task_id)
+
+    mapping = {
+        "do": (True, True),
+        "plan": (True, False),
+        "delegate": (False, True),
+        "drop": (False, False),
+    }
+    important, urgent = mapping[quadrant]
+    updated = await update_task_matrix(callback.from_user.id, task_id, important, urgent)
+
+    if not updated:
+        await callback.answer("Задача не найдена или уже закрыта.", show_alert=True)
+        return
+
+    text, reply_markup = await build_matrix_view(callback.from_user.id)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+    await callback.answer()
+
+
+@router.message(F.text == BTN_FOCUS)
+@router.message(Command("focus"))
+async def focus(message: types.Message):
+    active = await get_active_focus_session(message.from_user.id)
+    if active:
+        await message.answer(
+            build_focus_status_text(active),
+            parse_mode="HTML",
+            reply_markup=active_focus_keyboard(active.id),
+        )
+        return
+
+    await message.answer(
+        "🎯 <b>Фокус</b>\n\n"
+        "Выбери режим под текущее состояние:\n\n"
+        "<b>Pomodoro</b> — обычная рабочая задача.\n"
+        "<b>Short Focus</b> — короткий рывок без давления.\n"
+        "<b>Deep Work</b> — глубокая работа без переключений.",
+        parse_mode="HTML",
+        reply_markup=focus_methods_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("focus:"))
+async def focus_start(callback: types.CallbackQuery):
+    _, method, raw_minutes = callback.data.split(":", 2)
+    minutes = int(raw_minutes)
+    active = await get_active_focus_session(callback.from_user.id)
+
+    if active:
+        await callback.message.edit_text(
+            build_focus_status_text(active),
+            parse_mode="HTML",
+            reply_markup=active_focus_keyboard(active.id),
+        )
+        await callback.answer("У тебя уже идёт фокус-сессия.", show_alert=True)
+        return
+
+    session_id = await start_focus_session(callback.from_user.id, method, minutes)
+
+    await callback.message.edit_text(
+        build_focus_status_text(
+            SimpleNamespace(
+                id=session_id,
+                method=method,
+                duration_minutes=minutes,
+                started_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+            ),
+            frame=0,
+        )
+        + "\n\n"
+        f"{escape(FOCUS_METHOD_HINTS.get(method, 'Работай только над одним делом.'))}\n\n"
+        "Убери лишнее и работай только над одним делом.",
+        parse_mode="HTML",
+        reply_markup=active_focus_keyboard(session_id),
+    )
+    await callback.answer()
+
+    asyncio.create_task(finish_focus_later(callback.from_user.id, session_id, method, minutes))
+    asyncio.create_task(
+        animate_focus_session(
+            callback.from_user.id,
+            callback.message.chat.id,
+            callback.message.message_id,
+            session_id,
+        )
+    )
+
+
+def build_focus_status_text(session, frame: int = 0) -> str:
+    started = dt.datetime.fromisoformat(session.started_at)
+    now = dt.datetime.now(dt.UTC)
+    elapsed_seconds = max(0, int((now - started).total_seconds()))
+    total_seconds = max(1, session.duration_minutes * 60)
+    elapsed = elapsed_seconds // 60
+    left = max(0, (total_seconds - elapsed_seconds + 59) // 60)
+    progress = min(1, elapsed_seconds / total_seconds)
+    filled = min(10, int(progress * 10))
+    bar = "■" * filled + "□" * (10 - filled)
+    pulse = FOCUS_FRAMES[frame % len(FOCUS_FRAMES)]
+
+    return (
+        f"🎯 <b>{escape(session.method)}</b> {pulse}\n\n"
+        f"<code>{bar}</code> <b>{round(progress * 100)}%</b>\n"
+        f"Длительность: <b>{session.duration_minutes} мин</b>\n"
+        f"Прошло: <b>{elapsed} мин</b>\n"
+        f"Осталось: <b>{left} мин</b>\n\n"
+        "Держи один фокус. Всё лишнее потом."
+    )
+
+
+async def animate_focus_session(user_id: int, chat_id: int, message_id: int, session_id: int):
+    frame = 1
+
+    while True:
+        await asyncio.sleep(15)
+        active = await get_active_focus_session(user_id)
+
+        if not active or active.id != session_id:
+            return
+
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=build_focus_status_text(active, frame=frame),
+                parse_mode="HTML",
+                reply_markup=active_focus_keyboard(session_id),
+            )
+        except TelegramBadRequest:
+            pass
+
+        frame += 1
+
+
+@router.callback_query(F.data.startswith("focus_finish:"))
+async def focus_finish(callback: types.CallbackQuery):
+    session_id = int(callback.data.split(":", 1)[1])
+    finished = await finish_focus_session(callback.from_user.id, session_id)
+
+    if not finished:
+        await callback.answer("Сессия уже завершена или не найдена.", show_alert=True)
+        return
+
+    await callback.message.edit_text("Фокус-сессия завершена. Хорошая точка для короткой паузы.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("focus_cancel:"))
+async def focus_cancel(callback: types.CallbackQuery):
+    session_id = int(callback.data.split(":", 1)[1])
+    cancelled = await cancel_focus_session(callback.from_user.id, session_id)
+
+    if not cancelled:
+        await callback.answer("Сессия уже завершена или не найдена.", show_alert=True)
+        return
+
+    await callback.message.edit_text("Фокус-сессия отменена. Можно выбрать другой режим, когда будешь готов.")
+    await callback.answer()
+
+
+async def finish_focus_later(user_id: int, session_id: int, method: str, minutes: int):
+    await asyncio.sleep(minutes * 60)
+    finished = await finish_focus_session(user_id, session_id)
+    if finished:
+        await bot.send_message(
+            user_id,
+            f"Фокус-сессия завершена: <b>{escape(method)}</b>, {minutes} мин.\n\n"
+            "Сделай короткую паузу и отметь следующий шаг.",
+            parse_mode="HTML",
+        )
+
+
+@router.message(F.text == BTN_SUMMARY)
+@router.message(Command("summary"))
+async def summary(message: types.Message):
+    data = await get_daily_summary(message.from_user.id)
+    await message.answer(
+        "📊 <b>Итог дня</b>\n\n"
+        f"Готовые задачи: <b>{data['done_tasks']}</b>\n"
+        f"Открытые задачи: <b>{data['open_tasks']}</b>\n"
+        f"Новые заметки: <b>{data['notes']}</b>\n"
+        f"Фокус: <b>{data['focus_minutes']} мин</b>",
+        parse_mode="HTML",
+    )
+
+
+@router.message()
+async def free_text(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text:
+        return
+    if text.startswith("/"):
+        await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
+        return
+
+    await state.clear()
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    await add_note(message.from_user.id, text)
+    await message.answer("Записал как заметку.")
