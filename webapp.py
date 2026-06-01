@@ -195,64 +195,107 @@ MATRIX_HTML = """
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg: #f7f4ed;
+      --bg: #f6f1e8;
       --ink: #171717;
       --muted: #6f6a60;
-      --line: #ddd5c8;
+      --line: #ddd2c2;
       --card: #fffdf8;
-      --urgent: #f5c2a6;
-      --plan: #bddac7;
-      --delegate: #c9d7f2;
-      --drop: #ded8ce;
+      --surface: #fff9ef;
+      --urgent: #f1a37f;
+      --plan: #80bf9b;
+      --delegate: #8daee8;
+      --drop: #c9bfae;
       --accent: #1f7a5a;
+      --shadow: 0 10px 30px rgba(42, 33, 20, .08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      background: var(--bg);
+      background:
+        linear-gradient(180deg, #fffaf1 0%, var(--bg) 42%, #efe8dc 100%);
       color: var(--ink);
       font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    .app { padding: 18px; max-width: 900px; margin: 0 auto; }
-    header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
-    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    .app { padding: 18px; max-width: 1040px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; gap: 14px; align-items: flex-end; margin-bottom: 14px; }
+    h1 { margin: 0; font-size: 27px; letter-spacing: 0; }
     .hint { color: var(--muted); margin: 4px 0 0; }
+    .toolbar {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .summary-item {
+      background: rgba(255, 253, 248, .78);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+    }
+    .summary-value { display: block; font-size: 20px; font-weight: 850; line-height: 1; }
+    .summary-label { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .matrix-shell {
+      position: relative;
+      padding: 28px 0 0 30px;
+    }
+    .axis {
+      position: absolute;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .axis-top { top: 6px; left: 50%; transform: translateX(-50%); }
+    .axis-left { left: 0; top: 50%; transform: translateY(-50%) rotate(-90deg); transform-origin: center; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .cell {
-      min-height: 210px;
+      min-height: 235px;
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 12px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
     }
     .cell[data-q="do"] { border-top: 5px solid var(--urgent); }
     .cell[data-q="plan"] { border-top: 5px solid var(--plan); }
     .cell[data-q="delegate"] { border-top: 5px solid var(--delegate); }
     .cell[data-q="drop"] { border-top: 5px solid var(--drop); }
-    .cell-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
-    .cell-title { font-weight: 750; }
+    .cell-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
+    .cell-title { font-weight: 850; font-size: 16px; }
     .count { color: var(--muted); font-size: 13px; }
     .task {
       width: 100%;
       display: block;
       border: 1px solid var(--line);
+      border-left: 4px solid transparent;
       background: #fff;
       color: var(--ink);
       border-radius: 7px;
-      padding: 9px 10px;
+      padding: 10px 10px;
       margin: 7px 0;
       text-align: left;
       font: inherit;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(23,23,23,.04);
     }
+    .task[data-q="do"] { border-left-color: var(--urgent); }
+    .task[data-q="plan"] { border-left-color: var(--plan); }
+    .task[data-q="delegate"] { border-left-color: var(--delegate); }
+    .task[data-q="drop"] { border-left-color: var(--drop); }
+    .task[data-q="inbox"] { border-left-color: var(--line); }
+    .task:hover { border-color: #bba98f; }
     .task:active { transform: translateY(1px); }
     .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.16); }
     .inbox {
-      margin-top: 12px;
+      margin-top: 14px;
       border: 1px dashed var(--line);
       border-radius: 8px;
       padding: 12px;
-      background: rgba(255,255,255,.45);
+      background: rgba(255,255,255,.58);
     }
     .actions {
       display: none;
@@ -260,11 +303,12 @@ MATRIX_HTML = """
       bottom: 0;
       margin: 14px -18px -18px;
       padding: 12px 18px 18px;
-      background: rgba(247,244,237,.96);
+      background: rgba(246,241,232,.97);
       border-top: 1px solid var(--line);
+      backdrop-filter: blur(10px);
     }
     .actions.visible { display: block; }
-    .actions-title { font-weight: 700; margin-bottom: 8px; }
+    .actions-title { font-weight: 800; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .action {
       border: 0;
@@ -273,6 +317,7 @@ MATRIX_HTML = """
       font: inherit;
       font-weight: 700;
       color: var(--ink);
+      cursor: pointer;
     }
     .action[data-q="do"] { background: var(--urgent); }
     .action[data-q="plan"] { background: var(--plan); }
@@ -283,8 +328,13 @@ MATRIX_HTML = """
       .app { padding: 14px; }
       header { display: block; }
       h1 { font-size: 22px; }
+      .toolbar { grid-template-columns: repeat(5, minmax(54px, 1fr)); overflow-x: auto; padding-bottom: 2px; }
+      .summary-item { min-width: 68px; padding: 8px; }
+      .summary-value { font-size: 18px; }
+      .matrix-shell { padding-left: 0; padding-top: 22px; }
+      .axis-left { display: none; }
       .grid { gap: 8px; }
-      .cell { min-height: 170px; padding: 10px; }
+      .cell { min-height: 190px; padding: 10px; }
       .cell-title { font-size: 14px; }
       .task { font-size: 14px; padding: 8px; }
       .actions { margin-left: -14px; margin-right: -14px; margin-bottom: -14px; padding-left: 14px; padding-right: 14px; }
@@ -300,7 +350,12 @@ MATRIX_HTML = """
       </div>
     </header>
 
-    <section class="grid" id="grid"></section>
+    <section class="toolbar" id="summary"></section>
+    <section class="matrix-shell">
+      <div class="axis axis-top">Срочно</div>
+      <div class="axis axis-left">Важно</div>
+      <section class="grid" id="grid"></section>
+    </section>
     <section class="inbox" id="inbox"></section>
 
     <section class="actions" id="actions">
@@ -346,6 +401,7 @@ MATRIX_HTML = """
     function taskButton(task) {
       const button = document.createElement("button");
       button.className = "task" + (selected?.id === task.id ? " selected" : "");
+      button.dataset.q = task.quadrant;
       button.textContent = task.title;
       button.onclick = () => selectTask(task);
       return button;
@@ -386,6 +442,21 @@ MATRIX_HTML = """
       const grid = document.getElementById("grid");
       grid.innerHTML = "";
       order.forEach(quadrant => grid.appendChild(renderCell(quadrant)));
+
+      const summary = document.getElementById("summary");
+      const values = [
+        ["Всего", tasks.length],
+        [labels.do[0], tasks.filter(task => task.quadrant === "do").length],
+        [labels.plan[0], tasks.filter(task => task.quadrant === "plan").length],
+        [labels.delegate[0], tasks.filter(task => task.quadrant === "delegate").length],
+        ["Без кв.", tasks.filter(task => task.quadrant === "inbox").length],
+      ];
+      summary.innerHTML = values.map(([label, value]) => `
+        <div class="summary-item">
+          <span class="summary-value">${value}</span>
+          <span class="summary-label">${label}</span>
+        </div>
+      `).join("");
 
       const inboxItems = tasks.filter(task => task.quadrant === "inbox");
       const inbox = document.getElementById("inbox");

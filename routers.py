@@ -392,88 +392,43 @@ def matrix_badge(task) -> str:
 async def build_matrix_view(user_id: int):
     tasks = await get_matrix_tasks(user_id)
 
-    groups = {
-        "do": [],
-        "plan": [],
-        "delegate": [],
-        "drop": [],
-        "unknown": [],
-    }
-
-    for task in tasks:
-        if task.important is True and task.urgent is True:
-            groups["do"].append(task)
-        elif task.important is True and task.urgent is False:
-            groups["plan"].append(task)
-        elif task.important is False and task.urgent is True:
-            groups["delegate"].append(task)
-        elif task.important is False and task.urgent is False:
-            groups["drop"].append(task)
-        else:
-            groups["unknown"].append(task)
-
-    lines = [
-        "🧭 <b>Матрица Эйзенхауэра</b>",
-        "Выбери, что делать сейчас, что поставить в план, а что убрать из головы.",
-        "",
-        "<pre>"
-        "                 СРОЧНО        НЕ СРОЧНО\n"
-        f"ВАЖНО       {matrix_cell('СДЕЛАТЬ', groups['do'])} {matrix_cell('ПЛАН', groups['plan'])}\n"
-        f"НЕ ВАЖНО    {matrix_cell('ДЕЛЕГ.', groups['delegate'])} {matrix_cell('УБРАТЬ', groups['drop'])}"
-        "</pre>",
-        "",
-        format_matrix_details("🔥 Сделать сейчас", groups["do"]),
-        "",
-        format_matrix_details("📌 Запланировать", groups["plan"]),
-        "",
-        format_matrix_details("⚡ Делегировать", groups["delegate"]),
-        "",
-        format_matrix_details("🧹 Убрать", groups["drop"]),
-    ]
-
-    if groups["unknown"]:
-        lines.extend([
-            "",
-            "<b>Без квадранта</b>",
-            *[f"• {escape(task.title)}" for task in groups["unknown"][:8]],
-        ])
-
     if not tasks:
-        lines = [
+        return "\n".join([
             "🧭 <b>Матрица Эйзенхауэра</b>",
             "",
             "Открытых задач пока нет. Добавь задачу через /task или кнопку 📝 Записать.",
-        ]
+        ]), matrix_tasks_keyboard(tasks, WEBAPP_URL or None)
+
+    counts = count_matrix_tasks(tasks)
+    lines = [
+        "🧭 <b>Матрица Эйзенхауэра</b>",
+        "",
+        "Нормальная матрица открывается отдельным экраном: 4 квадранта, карточки задач и быстрый перенос.",
+        "",
+        f"🔥 Сделать сейчас: <b>{counts['do']}</b>",
+        f"📌 Запланировать: <b>{counts['plan']}</b>",
+        f"⚡ Делегировать: <b>{counts['delegate']}</b>",
+        f"🧹 Убрать: <b>{counts['drop']}</b>",
+        f"▫️ Без квадранта: <b>{counts['inbox']}</b>",
+    ]
 
     return "\n".join(lines), matrix_tasks_keyboard(tasks, WEBAPP_URL or None)
 
 
-def format_matrix_group(title: str, tasks, hint: str) -> str:
-    if not tasks:
-        return f"<b>{title}</b>\n<i>{hint}</i>\n—"
-
-    task_lines = [f"• {escape(task.title)}" for task in tasks[:6]]
-    if len(tasks) > 6:
-        task_lines.append(f"…ещё {len(tasks) - 6}")
-
-    return f"<b>{title}</b>\n<i>{hint}</i>\n" + "\n".join(task_lines)
-
-
-def matrix_cell(title: str, tasks) -> str:
-    return f"{title}:{len(tasks):>2}"
-
-
-def format_matrix_details(title: str, tasks) -> str:
-    if not tasks:
-        return f"<b>{title}</b>\n—"
-
-    task_lines = []
-    for task in tasks[:5]:
-        task_lines.append(f"• {escape(task.title)}")
-    if len(tasks) > 5:
-        task_lines.append(f"…ещё {len(tasks) - 5}")
-
-    return f"<b>{title}</b>\n" + "\n".join(task_lines)
+def count_matrix_tasks(tasks) -> dict[str, int]:
+    counts = {"do": 0, "plan": 0, "delegate": 0, "drop": 0, "inbox": 0}
+    for task in tasks:
+        if task.important is True and task.urgent is True:
+            counts["do"] += 1
+        elif task.important is True and task.urgent is False:
+            counts["plan"] += 1
+        elif task.important is False and task.urgent is True:
+            counts["delegate"] += 1
+        elif task.important is False and task.urgent is False:
+            counts["drop"] += 1
+        else:
+            counts["inbox"] += 1
+    return counts
 
 
 @router.callback_query(F.data.startswith("task_done:"))
@@ -542,7 +497,7 @@ async def focus(message: types.Message):
         "<b>Short Focus</b> — короткий рывок без давления.\n"
         "<b>Deep Work</b> — глубокая работа без переключений.",
         parse_mode="HTML",
-        reply_markup=focus_methods_keyboard(),
+        reply_markup=focus_methods_keyboard(WEBAPP_URL or None),
     )
 
 

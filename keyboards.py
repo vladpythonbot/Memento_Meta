@@ -101,14 +101,19 @@ def saved_notes_keyboard(notes) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def focus_methods_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def focus_methods_keyboard(webapp_url: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+
+    if webapp_url:
+        rows.append([InlineKeyboardButton(text="Открыть фокус-экран", web_app=WebAppInfo(url=f"{webapp_url}/focus"))])
+
+    rows.extend([
             [InlineKeyboardButton(text="Pomodoro · 25 мин", callback_data="focus:Pomodoro:25")],
             [InlineKeyboardButton(text="Short Focus · 15 мин", callback_data="focus:Short Focus:15")],
             [InlineKeyboardButton(text="Deep Work · 90 мин", callback_data="focus:Deep Work:90")],
-        ]
-    )
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def active_focus_keyboard(session_id: int) -> InlineKeyboardMarkup:
