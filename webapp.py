@@ -7,7 +7,9 @@ from aiohttp import web
 
 from config import BOT_TOKEN, HOST, PORT
 from db import (
+    add_task,
     cancel_focus_session,
+    complete_task,
     finish_focus_session,
     get_active_focus_session,
     get_matrix_tasks,
@@ -30,7 +32,9 @@ async def start_webapp() -> web.AppRunner:
     app.router.add_get("/matrix", matrix_page)
     app.router.add_get("/focus", focus_page)
     app.router.add_get("/matrix/api/tasks", api_tasks)
+    app.router.add_post("/matrix/api/tasks", api_create_task)
     app.router.add_post("/matrix/api/tasks/{task_id}/matrix", api_update_matrix)
+    app.router.add_post("/matrix/api/tasks/{task_id}/done", api_complete_task)
     app.router.add_get("/focus/api/session", api_focus_session)
     app.router.add_post("/focus/api/start", api_focus_start)
     app.router.add_post("/focus/api/finish", api_focus_finish)
@@ -84,6 +88,34 @@ async def api_update_matrix(request: web.Request) -> web.Response:
     important, urgent = QUADRANTS[quadrant]
     updated = await update_task_matrix(user_id, task_id, important, urgent)
     if not updated:
+        raise web.HTTPNotFound(text="Task not found")
+
+    return web.json_response({"ok": True})
+
+
+async def api_create_task(request: web.Request) -> web.Response:
+    user_id = user_id_from_request(request)
+    payload = await request.json()
+    title = str(payload.get("title", "")).strip()
+    quadrant = payload.get("quadrant")
+
+    if len(title) < 2:
+        raise web.HTTPBadRequest(text="Task title is too short")
+
+    task_id = await add_task(user_id, title[:500])
+
+    if quadrant in QUADRANTS:
+        important, urgent = QUADRANTS[quadrant]
+        await update_task_matrix(user_id, task_id, important, urgent)
+
+    return web.json_response({"ok": True, "id": task_id})
+
+
+async def api_complete_task(request: web.Request) -> web.Response:
+    user_id = user_id_from_request(request)
+    task_id = int(request.match_info["task_id"])
+    completed = await complete_task(user_id, task_id)
+    if not completed:
         raise web.HTTPNotFound(text="Task not found")
 
     return web.json_response({"ok": True})
@@ -221,6 +253,49 @@ MATRIX_HTML = """
     header { display: flex; justify-content: space-between; gap: 14px; align-items: flex-end; margin-bottom: 14px; }
     h1 { margin: 0; font-size: 27px; letter-spacing: 0; }
     .hint { color: var(--muted); margin: 4px 0 0; }
+    .composer {
+      background: rgba(255, 253, 248, .9);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow);
+    }
+    .input-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .task-input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--ink);
+      padding: 11px 12px;
+      font: inherit;
+      outline: none;
+    }
+    .task-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
+    .add-button {
+      border: 0;
+      border-radius: 7px;
+      padding: 0 16px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .chips { display: flex; gap: 6px; overflow-x: auto; padding-top: 8px; }
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--ink);
+      padding: 7px 10px;
+      font: inherit;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .chip.active { border-color: var(--accent); background: #eef7f1; color: #14583f; font-weight: 750; }
     .toolbar {
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -323,11 +398,14 @@ MATRIX_HTML = """
     .action[data-q="plan"] { background: var(--plan); }
     .action[data-q="delegate"] { background: var(--delegate); }
     .action[data-q="drop"] { background: var(--drop); }
+    .done-action { width: 100%; margin-top: 8px; background: var(--accent); color: #fff; }
     .empty { color: var(--muted); padding: 10px 0; }
     @media (max-width: 640px) {
       .app { padding: 14px; }
       header { display: block; }
       h1 { font-size: 22px; }
+      .input-row { grid-template-columns: 1fr; }
+      .add-button { min-height: 42px; }
       .toolbar { grid-template-columns: repeat(5, minmax(54px, 1fr)); overflow-x: auto; padding-bottom: 2px; }
       .summary-item { min-width: 68px; padding: 8px; }
       .summary-value { font-size: 18px; }
@@ -346,9 +424,23 @@ MATRIX_HTML = """
     <header>
       <div>
         <h1>Матрица</h1>
-        <p class="hint">Выбери задачу и перенеси её в нужный квадрант.</p>
+        <p class="hint">Пиши задачи здесь. Потом раскидывай по важности и срочности.</p>
       </div>
     </header>
+
+    <section class="composer">
+      <div class="input-row">
+        <input class="task-input" id="taskInput" maxlength="500" placeholder="Новая задача">
+        <button class="add-button" id="addTask">Добавить</button>
+      </div>
+      <div class="chips" id="quadrantChips">
+        <button class="chip active" data-q="inbox">Входящие</button>
+        <button class="chip" data-q="do">Сделать</button>
+        <button class="chip" data-q="plan">План</button>
+        <button class="chip" data-q="delegate">Делегировать</button>
+        <button class="chip" data-q="drop">Убрать</button>
+      </div>
+    </section>
 
     <section class="toolbar" id="summary"></section>
     <section class="matrix-shell">
@@ -362,10 +454,11 @@ MATRIX_HTML = """
       <div class="actions-title" id="selectedTitle"></div>
       <div class="action-grid">
         <button class="action" data-q="do">Сделать</button>
-        <button class="action" data-q="plan">Запланировать</button>
+        <button class="action" data-q="plan">План</button>
         <button class="action" data-q="delegate">Делегировать</button>
         <button class="action" data-q="drop">Убрать</button>
       </div>
+      <button class="action done-action" id="completeTask">Готово</button>
     </section>
   </main>
 
@@ -384,6 +477,7 @@ MATRIX_HTML = """
     const order = ["do", "plan", "delegate", "drop"];
     let tasks = [];
     let selected = null;
+    let newTaskQuadrant = "inbox";
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -412,6 +506,11 @@ MATRIX_HTML = """
       document.getElementById("selectedTitle").textContent = task.title;
       document.getElementById("actions").classList.add("visible");
       render();
+    }
+
+    function resetSelection() {
+      selected = null;
+      document.getElementById("actions").classList.remove("visible");
     }
 
     function renderCell(quadrant) {
@@ -480,6 +579,27 @@ MATRIX_HTML = """
       }
     }
 
+    async function createTask() {
+      const input = document.getElementById("taskInput");
+      const title = input.value.trim();
+      if (title.length < 2) {
+        input.focus();
+        return;
+      }
+
+      await api("/matrix/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          quadrant: newTaskQuadrant === "inbox" ? null : newTaskQuadrant
+        })
+      });
+
+      input.value = "";
+      resetSelection();
+      await load();
+    }
+
     document.querySelectorAll(".action").forEach(button => {
       button.onclick = async () => {
         if (!selected) return;
@@ -489,9 +609,32 @@ MATRIX_HTML = """
           body: JSON.stringify({ quadrant })
         });
         selected.quadrant = quadrant;
-        selected = null;
-        document.getElementById("actions").classList.remove("visible");
+        resetSelection();
         render();
+      };
+    });
+
+    document.getElementById("completeTask").onclick = async () => {
+      if (!selected) return;
+      await api(`/matrix/api/tasks/${selected.id}/done`, { method: "POST" });
+      tasks = tasks.filter(task => task.id !== selected.id);
+      resetSelection();
+      render();
+    };
+
+    document.getElementById("addTask").onclick = createTask;
+    document.getElementById("taskInput").addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        createTask();
+      }
+    });
+
+    document.querySelectorAll(".chip").forEach(button => {
+      button.onclick = () => {
+        newTaskQuadrant = button.dataset.q;
+        document.querySelectorAll(".chip").forEach(item => item.classList.remove("active"));
+        button.classList.add("active");
       };
     });
 

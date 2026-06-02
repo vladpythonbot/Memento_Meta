@@ -77,7 +77,7 @@ def matrix_tasks_keyboard(tasks, webapp_url: str | None = None) -> InlineKeyboar
     rows = []
 
     if webapp_url:
-        rows.append([InlineKeyboardButton(text="Открыть красивую матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix"))])
+        rows.append([InlineKeyboardButton(text="Открыть матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix"))])
 
     if not tasks:
         return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None

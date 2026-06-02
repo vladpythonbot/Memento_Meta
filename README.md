@@ -18,6 +18,7 @@ Telegram username: `memento_meta_bot`
 
 - Quick notes.
 - Saved Messages-style text capture.
+- Web App task capture.
 - Today tasks.
 - Task completion.
 - Eisenhower matrix for task prioritization.
@@ -31,6 +32,9 @@ Telegram username: `memento_meta_bot`
 - `📝 Записать`
 - `📅 Сегодня`
 - `🎯 Фокус`
+- `🧭 Матрица`
+- `🗂 Сохранённое`
+- `🧾 Обзор`
 - `📊 Итог`
 
 ## Focus Methods
@@ -42,7 +46,7 @@ Telegram username: `memento_meta_bot`
 ## Time Management Methods
 
 - Eisenhower matrix: important/urgent task sorting.
-- Telegram Web App matrix: visual 2x2 task board.
+- Telegram Web App matrix: visual 2x2 task board with quick task capture.
 
 ## Version 2 Direction
 
@@ -57,7 +61,7 @@ Telegram username: `memento_meta_bot`
 
 ## Telegram Web App
 
-The matrix can run as a Telegram Web App.
+The matrix runs as a Telegram Web App. In v3.5 the user can write a new task inside the Web App, choose a quadrant before saving, move existing tasks between quadrants, and mark a selected task as done.
 
 Set this variable in Railway:
 
