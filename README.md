@@ -29,9 +29,8 @@ Telegram username: `memento_meta_bot`
 
 ## First Screen
 
-- `🧭 Пространство`
+- `🧭 Панель`
 - `📝 Записать`
-- `🎯 Фокус`
 
 ## Focus Methods
 
@@ -57,7 +56,7 @@ Telegram username: `memento_meta_bot`
 
 ## Telegram Web App
 
-The matrix runs as a Telegram Web App. In v3.6 the bot stays minimal, while the Web App becomes the main workspace: the user can write a new task, choose a quadrant before saving, search tasks, filter by quadrant, see the next step, move existing tasks between quadrants, and mark a selected task as done.
+The v4 panel runs as a Telegram Web App at `/app`. The bot stays minimal, while the Web App becomes the main workspace with three modes: Today, Matrix, and Focus.
 
 Set this variable in Railway:
 
@@ -84,4 +83,10 @@ python main.py
 
 ## Railway
 
-Set `BOT_TOKEN` in Railway variables. `DB_PATH` can be left as default for local SQLite storage, but for long-term production use a persistent database is recommended.
+Set `BOT_TOKEN` and `WEBAPP_URL` in Railway variables.
+
+For SQLite persistence, attach a Railway Volume and set:
+
+```bash
+DB_PATH=/data/noto_memento.db
+```

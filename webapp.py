@@ -12,7 +12,9 @@ from db import (
     complete_task,
     finish_focus_session,
     get_active_focus_session,
+    get_daily_summary,
     get_matrix_tasks,
+    get_next_action_task,
     start_focus_session,
     update_task_matrix,
 )
@@ -29,6 +31,8 @@ QUADRANTS = {
 async def start_webapp() -> web.AppRunner:
     app = web.Application()
     app.router.add_get("/", health)
+    app.router.add_get("/app", app_page)
+    app.router.add_get("/app/api/overview", api_overview)
     app.router.add_get("/matrix", matrix_page)
     app.router.add_get("/focus", focus_page)
     app.router.add_get("/matrix/api/tasks", api_tasks)
@@ -49,6 +53,10 @@ async def start_webapp() -> web.AppRunner:
 
 async def health(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "service": "noto-memento"})
+
+
+async def app_page(_request: web.Request) -> web.Response:
+    return web.Response(text=APP_HTML, content_type="text/html")
 
 
 async def matrix_page(_request: web.Request) -> web.Response:
@@ -73,6 +81,21 @@ async def api_tasks(request: web.Request) -> web.Response:
             }
             for task in tasks
         ]
+    })
+
+
+async def api_overview(request: web.Request) -> web.Response:
+    user_id = user_id_from_request(request)
+    tasks = await get_matrix_tasks(user_id, limit=80)
+    summary = await get_daily_summary(user_id)
+    next_task = await get_next_action_task(user_id)
+    active_focus = await get_active_focus_session(user_id)
+
+    return web.json_response({
+        "summary": summary,
+        "next_task": task_payload(next_task) if next_task else None,
+        "active_focus": focus_session_payload(active_focus),
+        "tasks": [task_payload(task) for task in tasks],
     })
 
 
@@ -215,6 +238,449 @@ def task_quadrant(important: bool | None, urgent: bool | None) -> str:
     if important is False and urgent is False:
         return "drop"
     return "inbox"
+
+
+def task_payload(task) -> dict:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "important": task.important,
+        "urgent": task.urgent,
+        "quadrant": task_quadrant(task.important, task.urgent),
+    }
+
+
+APP_HTML = """
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Noto Memento · Panel</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --ink: #171717;
+      --muted: #706b62;
+      --line: #ded6ca;
+      --card: #fffdf8;
+      --accent: #1f7a5a;
+      --soft: #bddac7;
+      --warm: #f1a37f;
+      --blue: #8daee8;
+      --drop: #c9bfae;
+      --shadow: 0 12px 32px rgba(42, 33, 20, .08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(180deg, #fffaf1 0%, var(--bg) 48%, #ece3d5 100%);
+      color: var(--ink);
+      font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .app { max-width: 980px; margin: 0 auto; padding: 16px; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
+    .muted { color: var(--muted); }
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 14px 0; }
+    .tab {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 9px 10px;
+      background: rgba(255,255,255,.72);
+      color: var(--ink);
+      font: inherit;
+      font-weight: 750;
+    }
+    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .panel {
+      background: rgba(255,253,248,.9);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: var(--shadow);
+      margin-bottom: 10px;
+    }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .stat-value { display: block; font-size: 22px; font-weight: 900; line-height: 1; }
+    .stat-label { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    input, button { font: inherit; }
+    .input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--ink);
+      padding: 11px 12px;
+      outline: none;
+    }
+    .input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
+    .primary {
+      border: 0;
+      border-radius: 7px;
+      padding: 11px 14px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 850;
+    }
+    .chips { display: flex; gap: 6px; overflow-x: auto; padding-top: 8px; }
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--ink);
+      padding: 7px 10px;
+      white-space: nowrap;
+    }
+    .chip.active { border-color: var(--accent); background: #eef7f1; color: #14583f; font-weight: 750; }
+    .task {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--ink);
+      padding: 10px;
+      margin-top: 7px;
+      text-align: left;
+    }
+    .task[data-q="do"] { border-left-color: var(--warm); }
+    .task[data-q="plan"] { border-left-color: var(--soft); }
+    .task[data-q="delegate"] { border-left-color: var(--blue); }
+    .task[data-q="drop"] { border-left-color: var(--drop); }
+    .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.14); }
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+    .cell { min-height: 180px; }
+    .cell-title { font-weight: 850; margin-bottom: 5px; }
+    .focus-ring {
+      width: min(70vw, 260px);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      margin: 8px auto 12px;
+      background: conic-gradient(var(--accent) var(--progress, 0deg), #e7dfd2 0);
+      position: relative;
+    }
+    .focus-ring::after { content: ""; position: absolute; inset: 14px; border-radius: 50%; background: var(--card); }
+    .focus-center { position: relative; z-index: 1; text-align: center; }
+    .time { font-size: 46px; font-weight: 900; line-height: 1; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ghost { border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); padding: 11px; font-weight: 750; }
+    .danger { background: var(--warm); }
+    .hidden { display: none; }
+    @media (max-width: 680px) {
+      .app { padding: 14px; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .composer { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>Панель</h1>
+    <div class="muted">Мысли, задачи и фокус без лишнего шума.</div>
+
+    <nav class="tabs">
+      <button class="tab active" data-view="today">Сегодня</button>
+      <button class="tab" data-view="matrix">Матрица</button>
+      <button class="tab" data-view="focus">Фокус</button>
+    </nav>
+
+    <section class="view active" id="today">
+      <div class="panel" id="nextPanel"></div>
+      <div class="stats">
+        <div class="panel"><span class="stat-value" id="statOpen">0</span><span class="stat-label">открыто</span></div>
+        <div class="panel"><span class="stat-value" id="statDone">0</span><span class="stat-label">готово</span></div>
+        <div class="panel"><span class="stat-value" id="statFocus">0</span><span class="stat-label">мин фокуса</span></div>
+        <div class="panel"><span class="stat-value" id="statNotes">0</span><span class="stat-label">заметок</span></div>
+      </div>
+      <div class="panel" id="todayTasks"></div>
+    </section>
+
+    <section class="view" id="matrix">
+      <div class="panel">
+        <div class="composer">
+          <input class="input" id="taskInput" maxlength="500" placeholder="Новая задача">
+          <button class="primary" id="addTask">Добавить</button>
+        </div>
+        <div class="chips" id="quadrantChips">
+          <button class="chip active" data-q="inbox">Входящие</button>
+          <button class="chip" data-q="do">Сделать</button>
+          <button class="chip" data-q="plan">План</button>
+          <button class="chip" data-q="delegate">Делегировать</button>
+          <button class="chip" data-q="drop">Убрать</button>
+        </div>
+      </div>
+      <div class="grid" id="matrixGrid"></div>
+      <div class="panel hidden" id="taskActions">
+        <div id="selectedTitle" class="cell-title"></div>
+        <div class="chips">
+          <button class="chip" data-move="do">Сделать</button>
+          <button class="chip" data-move="plan">План</button>
+          <button class="chip" data-move="delegate">Делегировать</button>
+          <button class="chip" data-move="drop">Убрать</button>
+          <button class="chip" id="doneTask">Готово</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="focus">
+      <div class="panel">
+        <div class="focus-ring" id="focusRing">
+          <div class="focus-center">
+            <div id="focusMethod" class="cell-title">Pomodoro</div>
+            <div class="time" id="focusTime">25:00</div>
+            <div class="muted" id="focusStatus">готов начать</div>
+          </div>
+        </div>
+        <input class="input" id="focusInput" maxlength="120" placeholder="Над чем работаем">
+        <div class="chips" id="focusMethods">
+          <button class="chip active" data-method="Pomodoro" data-duration="25">25 мин</button>
+          <button class="chip" data-method="Short Focus" data-duration="15">15 мин</button>
+          <button class="chip" data-method="Deep Work" data-duration="60">60 мин</button>
+        </div>
+        <button class="primary" id="startFocus" style="width:100%; margin-top:10px;">Начать фокус</button>
+        <div class="controls hidden" id="focusControls">
+          <button class="ghost" id="finishFocus">Завершить</button>
+          <button class="ghost danger" id="cancelFocus">Отменить</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    tg?.ready();
+    tg?.expand();
+
+    const labels = {
+      do: ["Сделать", "важно и срочно"],
+      plan: ["План", "важно"],
+      delegate: ["Делегировать", "срочно"],
+      drop: ["Убрать", "лишнее"],
+      inbox: ["Входящие", "разобрать"]
+    };
+    const order = ["do", "plan", "delegate", "drop", "inbox"];
+    let tasks = [];
+    let selected = null;
+    let newTaskQuadrant = "inbox";
+    let focusSession = null;
+    let focusTimer = null;
+    let focusMethod = "Pomodoro";
+    let focusDuration = 25;
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Telegram-Init-Data": tg?.initData || "",
+          ...(options.headers || {})
+        }
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    }
+
+    function format(seconds) {
+      const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+      const s = Math.max(0, seconds % 60).toString().padStart(2, "0");
+      return `${m}:${s}`;
+    }
+
+    function taskButton(task) {
+      const button = document.createElement("button");
+      button.className = "task" + (selected?.id === task.id ? " selected" : "");
+      button.dataset.q = task.quadrant;
+      button.textContent = task.title;
+      button.onclick = () => selectTask(task);
+      return button;
+    }
+
+    function selectTask(task) {
+      selected = task;
+      document.getElementById("selectedTitle").textContent = task.title;
+      document.getElementById("taskActions").classList.remove("hidden");
+      renderMatrix();
+    }
+
+    function nextTask() {
+      return tasks.find(task => task.quadrant === "do")
+        || tasks.find(task => task.quadrant === "plan")
+        || tasks.find(task => task.quadrant === "inbox")
+        || null;
+    }
+
+    function renderToday(summary) {
+      const next = nextTask();
+      document.getElementById("nextPanel").innerHTML = next
+        ? `<div class="muted">Следующий шаг</div><div class="cell-title">${escapeHtml(next.title)}</div>`
+        : `<div class="cell-title">Пока нет задач</div><div class="muted">Добавь одну в матрице.</div>`;
+      document.getElementById("statOpen").textContent = summary.open_tasks;
+      document.getElementById("statDone").textContent = summary.done_tasks;
+      document.getElementById("statFocus").textContent = summary.focus_minutes;
+      document.getElementById("statNotes").textContent = summary.notes;
+      const top = tasks.slice(0, 5);
+      document.getElementById("todayTasks").innerHTML = `<div class="cell-title">Задачи</div>`;
+      top.forEach(task => document.getElementById("todayTasks").appendChild(taskButton(task)));
+    }
+
+    function renderMatrix() {
+      const grid = document.getElementById("matrixGrid");
+      grid.innerHTML = "";
+      order.forEach(quadrant => {
+        const items = tasks.filter(task => task.quadrant === quadrant);
+        const cell = document.createElement("section");
+        cell.className = "panel cell";
+        cell.innerHTML = `<div class="cell-title">${labels[quadrant][0]}</div><div class="muted">${labels[quadrant][1]} · ${items.length}</div>`;
+        items.forEach(task => cell.appendChild(taskButton(task)));
+        grid.appendChild(cell);
+      });
+    }
+
+    function renderFocus() {
+      const ring = document.getElementById("focusRing");
+      const method = document.getElementById("focusMethod");
+      const time = document.getElementById("focusTime");
+      const status = document.getElementById("focusStatus");
+      const controls = document.getElementById("focusControls");
+      const start = document.getElementById("startFocus");
+
+      if (!focusSession) {
+        ring.style.setProperty("--progress", "0deg");
+        method.textContent = focusMethod;
+        time.textContent = format(focusDuration * 60);
+        status.textContent = "готов начать";
+        controls.classList.add("hidden");
+        start.classList.remove("hidden");
+        return;
+      }
+
+      const started = new Date(focusSession.started_at);
+      const total = focusSession.duration_minutes * 60;
+      const elapsed = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+      const left = Math.max(0, total - elapsed);
+      const progress = Math.min(1, elapsed / total);
+      ring.style.setProperty("--progress", `${Math.round(progress * 360)}deg`);
+      method.textContent = focusSession.method;
+      time.textContent = format(left);
+      status.textContent = `${Math.round(progress * 100)}%`;
+      controls.classList.remove("hidden");
+      start.classList.add("hidden");
+    }
+
+    async function load() {
+      const overview = await api("/app/api/overview");
+      tasks = overview.tasks;
+      focusSession = overview.active_focus;
+      renderToday(overview.summary);
+      renderMatrix();
+      renderFocus();
+      if (focusTimer) clearInterval(focusTimer);
+      focusTimer = setInterval(renderFocus, 1000);
+    }
+
+    async function createTask() {
+      const input = document.getElementById("taskInput");
+      const title = input.value.trim();
+      if (title.length < 2) return input.focus();
+      await api("/matrix/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({ title, quadrant: newTaskQuadrant === "inbox" ? null : newTaskQuadrant })
+      });
+      input.value = "";
+      await load();
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+    }
+
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll(".tab").forEach(item => item.classList.remove("active"));
+        document.querySelectorAll(".view").forEach(item => item.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.view).classList.add("active");
+      };
+    });
+
+    document.querySelectorAll("#quadrantChips .chip").forEach(chip => {
+      chip.onclick = () => {
+        newTaskQuadrant = chip.dataset.q;
+        document.querySelectorAll("#quadrantChips .chip").forEach(item => item.classList.remove("active"));
+        chip.classList.add("active");
+      };
+    });
+
+    document.querySelectorAll("[data-move]").forEach(button => {
+      button.onclick = async () => {
+        if (!selected) return;
+        await api(`/matrix/api/tasks/${selected.id}/matrix`, {
+          method: "POST",
+          body: JSON.stringify({ quadrant: button.dataset.move })
+        });
+        selected = null;
+        document.getElementById("taskActions").classList.add("hidden");
+        await load();
+      };
+    });
+
+    document.getElementById("doneTask").onclick = async () => {
+      if (!selected) return;
+      await api(`/matrix/api/tasks/${selected.id}/done`, { method: "POST" });
+      selected = null;
+      document.getElementById("taskActions").classList.add("hidden");
+      await load();
+    };
+
+    document.getElementById("addTask").onclick = createTask;
+    document.getElementById("taskInput").addEventListener("keydown", event => {
+      if (event.key === "Enter") createTask();
+    });
+
+    document.querySelectorAll("#focusMethods .chip").forEach(chip => {
+      chip.onclick = () => {
+        focusMethod = chip.dataset.method;
+        focusDuration = Number(chip.dataset.duration);
+        document.querySelectorAll("#focusMethods .chip").forEach(item => item.classList.remove("active"));
+        chip.classList.add("active");
+        renderFocus();
+      };
+    });
+
+    document.getElementById("startFocus").onclick = async () => {
+      const data = await api("/focus/api/start", {
+        method: "POST",
+        body: JSON.stringify({ method: focusMethod, duration_minutes: focusDuration })
+      });
+      focusSession = data.session;
+      renderFocus();
+    };
+
+    document.getElementById("finishFocus").onclick = async () => {
+      await api("/focus/api/finish", { method: "POST", body: "{}" });
+      focusSession = null;
+      await load();
+    };
+
+    document.getElementById("cancelFocus").onclick = async () => {
+      await api("/focus/api/cancel", { method: "POST", body: "{}" });
+      focusSession = null;
+      renderFocus();
+    };
+
+    load();
+  </script>
+</body>
+</html>
+"""
 
 
 MATRIX_HTML = """

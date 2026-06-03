@@ -8,7 +8,7 @@ from aiogram.types import (
 
 
 BTN_CAPTURE = "📝 Записать"
-BTN_APP = "🧭 Пространство"
+BTN_APP = "🧭 Панель"
 BTN_TODAY = "📅 Сегодня"
 BTN_FOCUS = "🎯 Фокус"
 BTN_MATRIX = "🧭 Матрица"
@@ -19,8 +19,7 @@ BTN_SAVED = "🗂 Сохранённое"
 
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=BTN_APP)],
-        [KeyboardButton(text=BTN_CAPTURE), KeyboardButton(text=BTN_FOCUS)],
+        [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_CAPTURE)],
     ],
     resize_keyboard=True,
 )
@@ -32,8 +31,7 @@ def app_links_keyboard(webapp_url: str | None = None) -> InlineKeyboardMarkup | 
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Открыть матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix?v=3.7"))],
-            [InlineKeyboardButton(text="Открыть фокус", web_app=WebAppInfo(url=f"{webapp_url}/focus?v=3.7"))],
+            [InlineKeyboardButton(text="Открыть панель", web_app=WebAppInfo(url=f"{webapp_url}/app?v=4"))],
         ]
     )
 

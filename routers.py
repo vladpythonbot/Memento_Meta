@@ -82,7 +82,7 @@ async def start(message: types.Message, state: FSMContext):
     await message.answer(
         f"Привет, {escape(name)}.\n\n"
         "Я Noto Memento.\n\n"
-        "Пиши сюда мысли — я сохраню. Для задач и фокуса открывай пространство.",
+        "Пиши сюда мысли — я сохраню. Для задач и фокуса открывай панель.",
         reply_markup=main_keyboard,
     )
 
@@ -91,8 +91,8 @@ async def start(message: types.Message, state: FSMContext):
 async def app_home(message: types.Message):
     await ensure_user(message.from_user.id, message.from_user.first_name)
     await message.answer(
-        "🧭 <b>Пространство</b>\n\n"
-        "Здесь основная работа: задачи, матрица и фокус.",
+        "🧭 <b>Панель</b>\n\n"
+        "Сегодня, матрица и фокус в одном месте.",
         parse_mode="HTML",
         reply_markup=app_links_keyboard(WEBAPP_URL or None),
     )
@@ -102,9 +102,8 @@ async def app_home(message: types.Message):
 async def help_command(message: types.Message):
     await message.answer(
         "Коротко:\n\n"
-        "🧭 Пространство — задачи, матрица и фокус в Web App.\n"
-        "📝 Записать — сохранить мысль или задачу.\n"
-        "🎯 Фокус — быстрый вход в фокус.\n\n"
+        "🧭 Панель — задачи, матрица и фокус в Web App.\n"
+        "📝 Записать — сохранить мысль или задачу.\n\n"
         "Просто отправь текст — я сохраню его как заметку."
     )
 
