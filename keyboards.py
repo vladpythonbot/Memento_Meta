@@ -32,8 +32,8 @@ def app_links_keyboard(webapp_url: str | None = None) -> InlineKeyboardMarkup | 
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Открыть матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix"))],
-            [InlineKeyboardButton(text="Открыть фокус", web_app=WebAppInfo(url=f"{webapp_url}/focus"))],
+            [InlineKeyboardButton(text="Открыть матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix?v=3.7"))],
+            [InlineKeyboardButton(text="Открыть фокус", web_app=WebAppInfo(url=f"{webapp_url}/focus?v=3.7"))],
         ]
     )
 
@@ -88,7 +88,7 @@ def matrix_tasks_keyboard(tasks, webapp_url: str | None = None) -> InlineKeyboar
     rows = []
 
     if webapp_url:
-        rows.append([InlineKeyboardButton(text="Открыть матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix"))])
+        rows.append([InlineKeyboardButton(text="Открыть матрицу", web_app=WebAppInfo(url=f"{webapp_url}/matrix?v=3.7"))])
 
     if not tasks:
         return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
@@ -116,7 +116,7 @@ def focus_methods_keyboard(webapp_url: str | None = None) -> InlineKeyboardMarku
     rows = []
 
     if webapp_url:
-        rows.append([InlineKeyboardButton(text="Открыть фокус-экран", web_app=WebAppInfo(url=f"{webapp_url}/focus"))])
+        rows.append([InlineKeyboardButton(text="Открыть фокус", web_app=WebAppInfo(url=f"{webapp_url}/focus?v=3.7"))])
 
     rows.extend([
             [InlineKeyboardButton(text="Pomodoro · 25 мин", callback_data="focus:Pomodoro:25")],

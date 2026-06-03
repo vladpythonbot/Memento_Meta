@@ -250,6 +250,18 @@ MATRIX_HTML = """
       font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     .app { padding: 18px; max-width: 1040px; margin: 0 auto; }
+    .nav { display: flex; gap: 8px; margin-bottom: 14px; }
+    .nav a {
+      text-decoration: none;
+      color: var(--ink);
+      background: rgba(255,255,255,.72);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 11px;
+      font-weight: 750;
+      font-size: 14px;
+    }
+    .nav a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     header { display: flex; justify-content: space-between; gap: 14px; align-items: flex-end; margin-bottom: 14px; }
     h1 { margin: 0; font-size: 27px; letter-spacing: 0; }
     .hint { color: var(--muted); margin: 4px 0 0; }
@@ -453,6 +465,11 @@ MATRIX_HTML = """
 </head>
 <body>
   <main class="app">
+    <nav class="nav">
+      <a class="active" href="/matrix?v=3.7">Матрица</a>
+      <a href="/focus?v=3.7">Фокус</a>
+    </nav>
+
     <header>
       <div>
         <h1>Матрица</h1>
@@ -765,7 +782,19 @@ FOCUS_HTML = """
       color: var(--ink);
       font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    .app { max-width: 760px; margin: 0 auto; padding: 18px; }
+    .app { max-width: 820px; margin: 0 auto; padding: 18px; }
+    .nav { display: flex; gap: 8px; margin-bottom: 14px; }
+    .nav a {
+      text-decoration: none;
+      color: var(--ink);
+      background: rgba(255,255,255,.72);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 11px;
+      font-weight: 750;
+      font-size: 14px;
+    }
+    .nav a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     h1 { margin: 0; font-size: 24px; }
     .hint { color: var(--muted); margin: 5px 0 18px; }
     .timer {
@@ -801,7 +830,19 @@ FOCUS_HTML = """
     .method { font-weight: 800; margin-bottom: 6px; }
     .time { font-size: 46px; font-weight: 850; line-height: 1; }
     .status { color: var(--muted); margin-top: 8px; }
-    .methods { display: grid; gap: 8px; margin-top: 14px; }
+    .focus-input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 12px;
+      font: inherit;
+      outline: none;
+      margin-top: 14px;
+    }
+    .focus-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
+    .methods { display: grid; gap: 8px; margin-top: 10px; }
     .method-button, .control {
       border: 0;
       border-radius: 8px;
@@ -815,6 +856,20 @@ FOCUS_HTML = """
     .method-button strong { display: block; font-size: 16px; }
     .method-button span { color: var(--muted); }
     .method-button.primary { border-color: var(--accent); background: #f3fbf6; }
+    .duration-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; margin-top: 10px; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .duration-value { font-weight: 850; min-width: 68px; text-align: right; }
+    .start-button {
+      width: 100%;
+      border: 0;
+      border-radius: 8px;
+      padding: 13px 12px;
+      margin-top: 10px;
+      font: inherit;
+      font-weight: 850;
+      color: #fff;
+      background: var(--accent);
+    }
     .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
     .control.finish { background: var(--accent-soft); font-weight: 800; text-align: center; }
     .control.cancel { background: var(--warm); font-weight: 800; text-align: center; }
@@ -823,6 +878,11 @@ FOCUS_HTML = """
 </head>
 <body>
   <main class="app">
+    <nav class="nav">
+      <a href="/matrix?v=3.7">Матрица</a>
+      <a class="active" href="/focus?v=3.7">Фокус</a>
+    </nav>
+
     <h1>Фокус</h1>
     <p class="hint">Выбери режим и держи одно дело в центре.</p>
 
@@ -836,7 +896,9 @@ FOCUS_HTML = """
       </div>
     </section>
 
-    <section class="methods" id="methods">
+    <section id="methods">
+      <input class="focus-input" id="focusInput" maxlength="120" placeholder="Над чем работаем">
+      <div class="methods">
       <button class="method-button primary" data-method="Pomodoro" data-duration="25">
         <strong>Pomodoro · 25 мин</strong>
         <span>Обычная рабочая задача</span>
@@ -849,6 +911,12 @@ FOCUS_HTML = """
         <strong>Deep Work · 90 мин</strong>
         <span>Глубокая работа без переключений</span>
       </button>
+      </div>
+      <div class="duration-row">
+        <input id="durationRange" type="range" min="5" max="120" step="5" value="25">
+        <div class="duration-value" id="durationValue">25 мин</div>
+      </div>
+      <button class="start-button" id="startFocus">Начать фокус</button>
     </section>
 
     <section class="controls hidden" id="controls">
@@ -864,6 +932,9 @@ FOCUS_HTML = """
 
     let session = null;
     let timer = null;
+    let selectedMethod = "Pomodoro";
+    let selectedDuration = 25;
+    let focusTarget = "";
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -894,9 +965,9 @@ FOCUS_HTML = """
 
       if (!session) {
         ring.style.setProperty("--progress", "0deg");
-        method.textContent = "Нет активной сессии";
-        time.textContent = "00:00";
-        status.textContent = "Готов начать";
+        method.textContent = selectedMethod;
+        time.textContent = format(selectedDuration * 60);
+        status.textContent = (document.getElementById("focusInput").value || "Готов начать").trim();
         methods.classList.remove("hidden");
         controls.classList.add("hidden");
         return;
@@ -911,7 +982,7 @@ FOCUS_HTML = """
       ring.style.setProperty("--progress", `${Math.round(progress * 360)}deg`);
       method.textContent = session.method;
       time.textContent = format(left);
-      status.textContent = `${Math.round(progress * 100)}% · ${session.duration_minutes} мин`;
+      status.textContent = focusTarget || `${Math.round(progress * 100)}% · ${session.duration_minutes} мин`;
       methods.classList.add("hidden");
       controls.classList.remove("hidden");
     }
@@ -929,18 +1000,37 @@ FOCUS_HTML = """
     }
 
     document.querySelectorAll(".method-button").forEach(button => {
-      button.onclick = async () => {
+      button.onclick = () => {
+        selectedMethod = button.dataset.method;
+        selectedDuration = Number(button.dataset.duration);
+        document.getElementById("durationRange").value = selectedDuration;
+        document.getElementById("durationValue").textContent = `${selectedDuration} мин`;
+        document.querySelectorAll(".method-button").forEach(item => item.classList.remove("primary"));
+        button.classList.add("primary");
+        render();
+      };
+    });
+
+    document.getElementById("durationRange").oninput = event => {
+      selectedDuration = Number(event.target.value);
+      document.getElementById("durationValue").textContent = `${selectedDuration} мин`;
+      render();
+    };
+
+    document.getElementById("focusInput").oninput = render;
+
+    document.getElementById("startFocus").onclick = async () => {
+        focusTarget = document.getElementById("focusInput").value.trim();
         const data = await api("/focus/api/start", {
           method: "POST",
           body: JSON.stringify({
-            method: button.dataset.method,
-            duration_minutes: Number(button.dataset.duration)
+            method: selectedMethod,
+            duration_minutes: selectedDuration
           })
         });
         session = data.session;
         render();
-      };
-    });
+    };
 
     document.getElementById("finish").onclick = async () => {
       await api("/focus/api/finish", { method: "POST", body: "{}" });
