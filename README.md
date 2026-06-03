@@ -29,13 +29,9 @@ Telegram username: `memento_meta_bot`
 
 ## First Screen
 
+- `🧭 Пространство`
 - `📝 Записать`
-- `📅 Сегодня`
 - `🎯 Фокус`
-- `🧭 Матрица`
-- `🗂 Сохранённое`
-- `🧾 Обзор`
-- `📊 Итог`
 
 ## Focus Methods
 
@@ -61,7 +57,7 @@ Telegram username: `memento_meta_bot`
 
 ## Telegram Web App
 
-The matrix runs as a Telegram Web App. In v3.5 the user can write a new task inside the Web App, choose a quadrant before saving, move existing tasks between quadrants, and mark a selected task as done.
+The matrix runs as a Telegram Web App. In v3.6 the bot stays minimal, while the Web App becomes the main workspace: the user can write a new task, choose a quadrant before saving, search tasks, filter by quadrant, see the next step, move existing tasks between quadrants, and mark a selected task as done.
 
 Set this variable in Railway:
 

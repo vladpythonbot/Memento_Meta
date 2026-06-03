@@ -30,6 +30,7 @@ from db import (
     update_task_matrix,
 )
 from keyboards import (
+    BTN_APP,
     BTN_CAPTURE,
     BTN_FOCUS,
     BTN_MATRIX,
@@ -38,6 +39,7 @@ from keyboards import (
     BTN_SUMMARY,
     BTN_TODAY,
     active_focus_keyboard,
+    app_links_keyboard,
     capture_type_keyboard,
     focus_methods_keyboard,
     main_keyboard,
@@ -79,28 +81,31 @@ async def start(message: types.Message, state: FSMContext):
     name = message.from_user.first_name or "друг"
     await message.answer(
         f"Привет, {escape(name)}.\n\n"
-        "Я Noto Memento. Это как «Избранное» в Telegram, только для мыслей, задач и фокуса.\n\n"
-        "Просто отправь текст — я сохраню его. Для задачи используй /task.",
+        "Я Noto Memento.\n\n"
+        "Пиши сюда мысли — я сохраню. Для задач и фокуса открывай пространство.",
         reply_markup=main_keyboard,
+    )
+
+
+@router.message(F.text == BTN_APP)
+async def app_home(message: types.Message):
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    await message.answer(
+        "🧭 <b>Пространство</b>\n\n"
+        "Здесь основная работа: задачи, матрица и фокус.",
+        parse_mode="HTML",
+        reply_markup=app_links_keyboard(WEBAPP_URL or None),
     )
 
 
 @router.message(Command("help"))
 async def help_command(message: types.Message):
     await message.answer(
-        "Что умею сейчас:\n\n"
-        "📝 Записать — сохранить заметку или задачу.\n"
-        "📅 Сегодня — показать открытые задачи и свежие заметки.\n"
-        "🎯 Фокус — запустить или проверить рабочую сессию.\n"
-        "🧭 Матрица — разнести задачи по Эйзенхауэру.\n"
-        "🗂 Сохранённое — последние записи.\n"
-        "📊 Итог — короткий итог дня.\n"
-        "🧾 Обзор — неделя и следующий шаг.\n\n"
-        "Быстро:\n"
-        "/task текст — добавить задачу.\n"
-        "/note текст — сохранить заметку.\n"
-        "/saved — открыть сохранённое.\n"
-        "/review — обзор недели."
+        "Коротко:\n\n"
+        "🧭 Пространство — задачи, матрица и фокус в Web App.\n"
+        "📝 Записать — сохранить мысль или задачу.\n"
+        "🎯 Фокус — быстрый вход в фокус.\n\n"
+        "Просто отправь текст — я сохраню его как заметку."
     )
 
 
@@ -161,6 +166,10 @@ async def capture_start(message: types.Message, state: FSMContext):
 
 
 async def handle_navigation_during_capture(message: types.Message, state: FSMContext, text: str) -> bool:
+    if text == BTN_APP:
+        await state.clear()
+        await app_home(message)
+        return True
     if text == BTN_TODAY:
         await state.clear()
         await today(message)
