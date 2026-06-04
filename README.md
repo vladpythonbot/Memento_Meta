@@ -58,6 +58,8 @@ Telegram username: `memento_meta_bot`
 
 The v4 panel runs as a Telegram Web App at `/app`. The bot stays minimal, while the Web App becomes the main workspace with three modes: Today, Matrix, and Focus.
 
+V4.1 adds task deletion, a true square Eisenhower matrix, a separate inbox area, cleaner empty states, and a simpler two-button bot panel.
+
 Set this variable in Railway:
 
 ```bash

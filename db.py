@@ -150,6 +150,16 @@ async def complete_task(user_id: int, task_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+async def delete_task(user_id: int, task_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM tasks WHERE id = ? AND user_id = ?",
+            (task_id, user_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def update_task_matrix(user_id: int, task_id: int, important: bool, urgent: bool) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""

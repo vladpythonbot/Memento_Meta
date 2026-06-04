@@ -10,6 +10,7 @@ from db import (
     add_task,
     cancel_focus_session,
     complete_task,
+    delete_task,
     finish_focus_session,
     get_active_focus_session,
     get_daily_summary,
@@ -39,6 +40,7 @@ async def start_webapp() -> web.AppRunner:
     app.router.add_post("/matrix/api/tasks", api_create_task)
     app.router.add_post("/matrix/api/tasks/{task_id}/matrix", api_update_matrix)
     app.router.add_post("/matrix/api/tasks/{task_id}/done", api_complete_task)
+    app.router.add_delete("/matrix/api/tasks/{task_id}", api_delete_task)
     app.router.add_get("/focus/api/session", api_focus_session)
     app.router.add_post("/focus/api/start", api_focus_start)
     app.router.add_post("/focus/api/finish", api_focus_finish)
@@ -139,6 +141,16 @@ async def api_complete_task(request: web.Request) -> web.Response:
     task_id = int(request.match_info["task_id"])
     completed = await complete_task(user_id, task_id)
     if not completed:
+        raise web.HTTPNotFound(text="Task not found")
+
+    return web.json_response({"ok": True})
+
+
+async def api_delete_task(request: web.Request) -> web.Response:
+    user_id = user_id_from_request(request)
+    task_id = int(request.match_info["task_id"])
+    deleted = await delete_task(user_id, task_id)
+    if not deleted:
         raise web.HTTPNotFound(text="Task not found")
 
     return web.json_response({"ok": True})
@@ -353,8 +365,41 @@ APP_HTML = """
     .task[data-q="delegate"] { border-left-color: var(--blue); }
     .task[data-q="drop"] { border-left-color: var(--drop); }
     .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.14); }
-    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
-    .cell { min-height: 180px; }
+    .matrix-wrap {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .axis-y {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      padding: 10px 0;
+    }
+    .axis-x {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(190px, 1fr));
+      gap: 9px;
+      aspect-ratio: 1 / 1;
+      min-height: 420px;
+    }
+    .cell { min-height: 0; overflow: auto; }
     .cell-title { font-weight: 850; margin-bottom: 5px; }
     .focus-ring {
       width: min(70vw, 260px);
@@ -371,13 +416,16 @@ APP_HTML = """
     .time { font-size: 46px; font-weight: 900; line-height: 1; }
     .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .ghost { border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); padding: 11px; font-weight: 750; }
-    .danger { background: var(--warm); }
+    .danger { background: var(--warm); border-color: var(--warm); }
+    .empty { color: var(--muted); padding: 10px 0; }
     .hidden { display: none; }
     @media (max-width: 680px) {
       .app { padding: 14px; }
       .stats { grid-template-columns: repeat(2, 1fr); }
       .composer { grid-template-columns: 1fr; }
-      .grid { grid-template-columns: 1fr; }
+      .matrix-wrap { display: block; }
+      .axis-y { display: none; }
+      .grid { aspect-ratio: auto; min-height: 0; grid-template-rows: none; }
     }
   </style>
 </head>
@@ -417,7 +465,12 @@ APP_HTML = """
           <button class="chip" data-q="drop">Убрать</button>
         </div>
       </div>
-      <div class="grid" id="matrixGrid"></div>
+      <div class="axis-x">Срочно</div>
+      <div class="matrix-wrap">
+        <div class="axis-y">Важно</div>
+        <div class="grid" id="matrixGrid"></div>
+      </div>
+      <div class="panel" id="inboxPanel"></div>
       <div class="panel hidden" id="taskActions">
         <div id="selectedTitle" class="cell-title"></div>
         <div class="chips">
@@ -426,6 +479,7 @@ APP_HTML = """
           <button class="chip" data-move="delegate">Делегировать</button>
           <button class="chip" data-move="drop">Убрать</button>
           <button class="chip" id="doneTask">Готово</button>
+          <button class="chip danger" id="deleteTask">Удалить</button>
         </div>
       </div>
     </section>
@@ -466,7 +520,7 @@ APP_HTML = """
       drop: ["Убрать", "лишнее"],
       inbox: ["Входящие", "разобрать"]
     };
-    const order = ["do", "plan", "delegate", "drop", "inbox"];
+    const order = ["do", "plan", "delegate", "drop"];
     let tasks = [];
     let selected = null;
     let newTaskQuadrant = "inbox";
@@ -522,12 +576,16 @@ APP_HTML = """
       document.getElementById("nextPanel").innerHTML = next
         ? `<div class="muted">Следующий шаг</div><div class="cell-title">${escapeHtml(next.title)}</div>`
         : `<div class="cell-title">Пока нет задач</div><div class="muted">Добавь одну в матрице.</div>`;
+      document.getElementById("nextPanel").onclick = next ? () => selectTask(next) : null;
       document.getElementById("statOpen").textContent = summary.open_tasks;
       document.getElementById("statDone").textContent = summary.done_tasks;
       document.getElementById("statFocus").textContent = summary.focus_minutes;
       document.getElementById("statNotes").textContent = summary.notes;
       const top = tasks.slice(0, 5);
       document.getElementById("todayTasks").innerHTML = `<div class="cell-title">Задачи</div>`;
+      if (!top.length) {
+        document.getElementById("todayTasks").insertAdjacentHTML("beforeend", `<div class="empty">Сегодня чисто. Добавь задачу в матрице.</div>`);
+      }
       top.forEach(task => document.getElementById("todayTasks").appendChild(taskButton(task)));
     }
 
@@ -539,9 +597,20 @@ APP_HTML = """
         const cell = document.createElement("section");
         cell.className = "panel cell";
         cell.innerHTML = `<div class="cell-title">${labels[quadrant][0]}</div><div class="muted">${labels[quadrant][1]} · ${items.length}</div>`;
+        if (!items.length) {
+          cell.insertAdjacentHTML("beforeend", `<div class="empty">Пусто</div>`);
+        }
         items.forEach(task => cell.appendChild(taskButton(task)));
         grid.appendChild(cell);
       });
+
+      const inboxItems = tasks.filter(task => task.quadrant === "inbox");
+      const inbox = document.getElementById("inboxPanel");
+      inbox.innerHTML = `<div class="cell-title">Входящие</div><div class="muted">без квадранта · ${inboxItems.length}</div>`;
+      if (!inboxItems.length) {
+        inbox.insertAdjacentHTML("beforeend", `<div class="empty">Все задачи разобраны.</div>`);
+      }
+      inboxItems.forEach(task => inbox.appendChild(taskButton(task)));
     }
 
     function renderFocus() {
@@ -637,6 +706,15 @@ APP_HTML = """
       await api(`/matrix/api/tasks/${selected.id}/done`, { method: "POST" });
       selected = null;
       document.getElementById("taskActions").classList.add("hidden");
+      await load();
+    };
+
+    document.getElementById("deleteTask").onclick = async () => {
+      if (!selected) return;
+      const task = selected;
+      selected = null;
+      document.getElementById("taskActions").classList.add("hidden");
+      await api(`/matrix/api/tasks/${task.id}`, { method: "DELETE" });
       await load();
     };
 
