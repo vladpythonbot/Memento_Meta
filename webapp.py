@@ -1,10 +1,13 @@
+import asyncio
 import hashlib
 import hmac
 import json
+from html import escape
 from urllib.parse import parse_qsl
 
 from aiohttp import web
 
+from bot import bot
 from config import BOT_TOKEN, HOST, PORT
 from db import (
     add_task,
@@ -54,7 +57,7 @@ async def start_webapp() -> web.AppRunner:
 
 
 async def health(_request: web.Request) -> web.Response:
-    return web.json_response({"ok": True, "service": "noto-memento"})
+    return web.json_response({"ok": True, "service": "memento-meta"})
 
 
 async def app_page(_request: web.Request) -> web.Response:
@@ -173,6 +176,16 @@ async def api_focus_start(request: web.Request) -> web.Response:
     duration = int(payload.get("duration_minutes", 25))
     session_id = await start_focus_session(user_id, method, duration)
     session = await get_active_focus_session(user_id)
+    pinned_message = await send_focus_timer_message(user_id, session)
+    asyncio.create_task(
+        finish_focus_later(
+            user_id,
+            session_id,
+            method,
+            duration,
+            message_id=pinned_message.message_id if pinned_message else None,
+        )
+    )
     return web.json_response({"session": focus_session_payload(session), "id": session_id})
 
 
@@ -183,6 +196,8 @@ async def api_focus_finish(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "reason": "no_active_session"})
 
     finished = await finish_focus_session(user_id, active.id)
+    if finished:
+        await send_focus_report(user_id, active.method, active.duration_minutes)
     return web.json_response({"ok": finished})
 
 
@@ -194,6 +209,64 @@ async def api_focus_cancel(request: web.Request) -> web.Response:
 
     cancelled = await cancel_focus_session(user_id, active.id)
     return web.json_response({"ok": cancelled})
+
+
+async def finish_focus_later(
+    user_id: int,
+    session_id: int,
+    method: str,
+    duration: int,
+    message_id: int | None = None,
+) -> None:
+    await asyncio.sleep(duration * 60)
+    finished = await finish_focus_session(user_id, session_id)
+    if finished:
+        await send_focus_report(user_id, method, duration, message_id=message_id)
+
+
+def build_focus_timer_text(session) -> str:
+    return (
+        f"🎯 <b>{escape(session.method)}</b>\n\n"
+        "<code>□□□□□□□□□□</code> <b>0%</b>\n"
+        f"Длительность: <b>{session.duration_minutes} мин</b>\n"
+        "Прошло: <b>0 мин</b>\n"
+        f"Осталось: <b>{session.duration_minutes} мин</b>\n\n"
+        "Это закреплённый таймер. В конце он станет отчётом."
+    )
+
+
+async def send_focus_timer_message(user_id: int, session):
+    if not session:
+        return None
+
+    message = await bot.send_message(user_id, build_focus_timer_text(session), parse_mode="HTML")
+    try:
+        await bot.pin_chat_message(chat_id=user_id, message_id=message.message_id, disable_notification=True)
+    except Exception:
+        pass
+    return message
+
+
+async def send_focus_report(user_id: int, method: str, duration: int, message_id: int | None = None) -> None:
+    summary = await get_daily_summary(user_id)
+    report = (
+        "✅ <b>Концентрация завершена</b>\n\n"
+        f"Режим: <b>{escape(method)}</b>\n"
+        f"Длительность: <b>{duration} мин</b>\n\n"
+        "📊 <b>Итог дня</b>\n"
+        f"Готовые задачи: <b>{summary['done_tasks']}</b>\n"
+        f"Открытые задачи: <b>{summary['open_tasks']}</b>\n"
+        f"Заметки: <b>{summary['notes']}</b>\n"
+        f"Фокус: <b>{summary['focus_minutes']} мин</b>\n\n"
+        "Сделай короткую паузу и выбери следующий шаг."
+    )
+    if message_id:
+        try:
+            await bot.edit_message_text(chat_id=user_id, message_id=message_id, text=report, parse_mode="HTML")
+        except Exception:
+            pass
+
+    await bot.send_message(user_id, report, parse_mode="HTML")
 
 
 def focus_session_payload(session) -> dict | None:
@@ -268,7 +341,7 @@ APP_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Noto Memento · Panel</title>
+  <title>Memento Meta · Panel</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -365,6 +438,8 @@ APP_HTML = """
     .task[data-q="delegate"] { border-left-color: var(--blue); }
     .task[data-q="drop"] { border-left-color: var(--drop); }
     .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.14); }
+    .task-title { display: block; font-weight: 750; overflow-wrap: anywhere; }
+    .task-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
     .matrix-wrap {
       display: grid;
       grid-template-columns: auto 1fr;
@@ -552,7 +627,13 @@ APP_HTML = """
       const button = document.createElement("button");
       button.className = "task" + (selected?.id === task.id ? " selected" : "");
       button.dataset.q = task.quadrant;
-      button.textContent = task.title;
+      const title = document.createElement("span");
+      title.className = "task-title";
+      title.textContent = task.title;
+      const meta = document.createElement("span");
+      meta.className = "task-meta";
+      meta.textContent = labels[task.quadrant]?.[1] || "нужно разобрать";
+      button.append(title, meta);
       button.onclick = () => selectTask(task);
       return button;
     }
@@ -767,7 +848,7 @@ MATRIX_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Noto Memento · Matrix</title>
+  <title>Memento Meta · Matrix</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -782,6 +863,7 @@ MATRIX_HTML = """
       --delegate: #8daee8;
       --drop: #c9bfae;
       --accent: #1f7a5a;
+      --danger: #d87864;
       --shadow: 0 10px 30px rgba(42, 33, 20, .08);
     }
     * { box-sizing: border-box; }
@@ -839,6 +921,7 @@ MATRIX_HTML = """
       font: inherit;
       font-weight: 800;
       cursor: pointer;
+      min-width: 126px;
     }
     .chips { display: flex; gap: 6px; overflow-x: auto; padding-top: 8px; }
     .chip {
@@ -922,6 +1005,11 @@ MATRIX_HTML = """
       display: flex;
       flex-direction: column;
     }
+    .cell.target {
+      background: #fbfff9;
+      border-color: rgba(31,122,90,.45);
+      box-shadow: 0 0 0 2px rgba(31,122,90,.12), var(--shadow);
+    }
     .cell[data-q="do"] { border-top: 5px solid var(--urgent); }
     .cell[data-q="plan"] { border-top: 5px solid var(--plan); }
     .cell[data-q="delegate"] { border-top: 5px solid var(--delegate); }
@@ -929,6 +1017,30 @@ MATRIX_HTML = """
     .cell-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
     .cell-title { font-weight: 850; font-size: 16px; }
     .count { color: var(--muted); font-size: 13px; }
+    .cell-tools { display: flex; align-items: center; gap: 6px; }
+    .cell-add {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-weight: 850;
+      cursor: pointer;
+    }
+    .count-pill {
+      min-width: 28px;
+      height: 28px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.72);
+      font-size: 13px;
+      font-weight: 800;
+    }
     .task {
       width: 100%;
       display: block;
@@ -944,6 +1056,8 @@ MATRIX_HTML = """
       cursor: pointer;
       box-shadow: 0 2px 8px rgba(23,23,23,.04);
     }
+    .task-title { display: block; font-weight: 750; overflow-wrap: anywhere; }
+    .task-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
     .task[data-q="do"] { border-left-color: var(--urgent); }
     .task[data-q="plan"] { border-left-color: var(--plan); }
     .task[data-q="delegate"] { border-left-color: var(--delegate); }
@@ -986,6 +1100,7 @@ MATRIX_HTML = """
     .action[data-q="delegate"] { background: var(--delegate); }
     .action[data-q="drop"] { background: var(--drop); }
     .done-action { width: 100%; margin-top: 8px; background: var(--accent); color: #fff; }
+    .delete-action { width: 100%; margin-top: 8px; background: #fff; color: var(--danger); border: 1px solid rgba(216,120,100,.45); }
     .empty { color: var(--muted); padding: 10px 0; }
     @media (max-width: 640px) {
       .app { padding: 14px; }
@@ -1010,8 +1125,8 @@ MATRIX_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a class="active" href="/matrix?v=3.7">Матрица</a>
-      <a href="/focus?v=3.7">Фокус</a>
+      <a class="active" href="/matrix?v=4.3">Матрица</a>
+      <a href="/focus?v=4.3">Фокус</a>
     </nav>
 
     <header>
@@ -1069,6 +1184,7 @@ MATRIX_HTML = """
         <button class="action" data-q="drop">Убрать</button>
       </div>
       <button class="action done-action" id="completeTask">Готово</button>
+      <button class="action delete-action" id="deleteTask">Удалить</button>
     </section>
   </main>
 
@@ -1125,10 +1241,20 @@ MATRIX_HTML = """
       document.getElementById("actions").classList.remove("visible");
     }
 
+    function setNewTaskQuadrant(quadrant) {
+      newTaskQuadrant = quadrant;
+      document.querySelectorAll("#quadrantChips .chip").forEach(item => {
+        item.classList.toggle("active", item.dataset.q === quadrant);
+      });
+      document.getElementById("addTask").textContent = quadrant === "inbox" ? "Добавить" : labels[quadrant][0];
+      render();
+      document.getElementById("taskInput").focus();
+    }
+
     function renderCell(quadrant) {
       const items = visibleTasks().filter(task => task.quadrant === quadrant);
       const cell = document.createElement("section");
-      cell.className = "cell";
+      cell.className = "cell" + (newTaskQuadrant === quadrant ? " target" : "");
       cell.dataset.q = quadrant;
       cell.innerHTML = `
         <div class="cell-head">
@@ -1136,9 +1262,16 @@ MATRIX_HTML = """
             <div class="cell-title">${labels[quadrant][0]}</div>
             <div class="count">${labels[quadrant][1]}</div>
           </div>
-          <div class="count">${items.length}</div>
+          <div class="cell-tools">
+            <span class="count-pill">${items.length}</span>
+            <button class="cell-add" type="button" aria-label="Добавить">+</button>
+          </div>
         </div>
       `;
+      cell.querySelector(".cell-add").onclick = event => {
+        event.stopPropagation();
+        setNewTaskQuadrant(quadrant);
+      };
       if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "empty";
@@ -1261,6 +1394,15 @@ MATRIX_HTML = """
       render();
     };
 
+    document.getElementById("deleteTask").onclick = async () => {
+      if (!selected) return;
+      const task = selected;
+      await api(`/matrix/api/tasks/${task.id}`, { method: "DELETE" });
+      tasks = tasks.filter(item => item.id !== task.id);
+      resetSelection();
+      render();
+    };
+
     document.getElementById("addTask").onclick = createTask;
     document.getElementById("taskInput").addEventListener("keydown", event => {
       if (event.key === "Enter") {
@@ -1272,9 +1414,7 @@ MATRIX_HTML = """
     document.querySelectorAll(".chip").forEach(button => {
       button.onclick = () => {
         if (!button.dataset.q) return;
-        newTaskQuadrant = button.dataset.q;
-        document.querySelectorAll("#quadrantChips .chip").forEach(item => item.classList.remove("active"));
-        button.classList.add("active");
+        setNewTaskQuadrant(button.dataset.q);
       };
     });
 
@@ -1305,7 +1445,7 @@ FOCUS_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Noto Memento · Focus</title>
+  <title>Memento Meta · Focus</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -1423,8 +1563,8 @@ FOCUS_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a href="/matrix?v=3.7">Матрица</a>
-      <a class="active" href="/focus?v=3.7">Фокус</a>
+      <a href="/matrix?v=4.3">Матрица</a>
+      <a class="active" href="/focus?v=4.3">Фокус</a>
     </nav>
 
     <h1>Фокус</h1>
@@ -1593,3 +1733,4 @@ FOCUS_HTML = """
 </body>
 </html>
 """
+

@@ -28,7 +28,7 @@ async def main():
         logger.info("Web app started on port %s", PORT)
 
         dp.include_router(router)
-        logger.info("Noto Memento started")
+        logger.info("Memento Meta started")
         await dp.start_polling(bot)
     except TelegramUnauthorizedError:
         logger.error("Telegram rejected BOT_TOKEN. Check .env or Railway variables.")
@@ -36,7 +36,7 @@ async def main():
         if "web_runner" in locals():
             await web_runner.cleanup()
         await bot.session.close()
-        logger.info("Noto Memento stopped")
+        logger.info("Memento Meta stopped")
 
 
 if __name__ == "__main__":

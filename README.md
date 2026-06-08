@@ -1,16 +1,16 @@
-# Noto Memento
+# Memento Meta
 
-Noto Memento is a minimalist Telegram bot for notes, daily tasks, and focus sessions.
+Memento Meta is a minimalist Telegram bot for notes, daily tasks, and focus sessions.
 
 ## Concept
 
-Noto Memento helps the user quickly unload thoughts, turn them into tasks, choose a focus method, and see a simple daily summary.
+Memento Meta helps the user quickly unload thoughts, turn them into tasks, choose a focus method, and see a simple daily summary.
 
-The product idea is not to copy a heavy task manager inside Telegram. Noto Memento should feel calm, fast, and useful in ordinary daily work.
+The product idea is not to copy a heavy task manager inside Telegram. Memento Meta should feel calm, fast, and useful in ordinary daily work.
 
 ## Naming
 
-Display name: `Noto Memento`
+Display name: `Memento Meta`
 
 Telegram username: `memento_meta_bot`
 
@@ -90,5 +90,5 @@ Set `BOT_TOKEN` and `WEBAPP_URL` in Railway variables.
 For SQLite persistence, attach a Railway Volume and set:
 
 ```bash
-DB_PATH=/data/noto_memento.db
+DB_PATH=/data/memento_meta.db
 ```

@@ -543,8 +543,18 @@ async def focus_start(callback: types.CallbackQuery):
         reply_markup=active_focus_keyboard(session_id),
     )
     await callback.answer()
+    await pin_focus_message(callback.message.chat.id, callback.message.message_id)
 
-    asyncio.create_task(finish_focus_later(callback.from_user.id, session_id, method, minutes))
+    asyncio.create_task(
+        finish_focus_later(
+            callback.from_user.id,
+            session_id,
+            method,
+            minutes,
+            chat_id=callback.message.chat.id,
+            message_id=callback.message.message_id,
+        )
+    )
     asyncio.create_task(
         animate_focus_session(
             callback.from_user.id,
@@ -577,6 +587,28 @@ def build_focus_status_text(session, frame: int = 0) -> str:
     )
 
 
+async def build_focus_report_text(user_id: int, method: str, minutes: int) -> str:
+    data = await get_daily_summary(user_id)
+    return (
+        "✅ <b>Концентрация завершена</b>\n\n"
+        f"Режим: <b>{escape(method)}</b>\n"
+        f"Длительность: <b>{minutes} мин</b>\n\n"
+        "📊 <b>Итог дня</b>\n"
+        f"Готовые задачи: <b>{data['done_tasks']}</b>\n"
+        f"Открытые задачи: <b>{data['open_tasks']}</b>\n"
+        f"Заметки: <b>{data['notes']}</b>\n"
+        f"Фокус: <b>{data['focus_minutes']} мин</b>\n\n"
+        "Сделай короткую паузу и выбери следующий шаг."
+    )
+
+
+async def pin_focus_message(chat_id: int, message_id: int) -> None:
+    try:
+        await bot.pin_chat_message(chat_id=chat_id, message_id=message_id, disable_notification=True)
+    except TelegramBadRequest:
+        pass
+
+
 async def animate_focus_session(user_id: int, chat_id: int, message_id: int, session_id: int):
     frame = 1
 
@@ -604,13 +636,19 @@ async def animate_focus_session(user_id: int, chat_id: int, message_id: int, ses
 @router.callback_query(F.data.startswith("focus_finish:"))
 async def focus_finish(callback: types.CallbackQuery):
     session_id = int(callback.data.split(":", 1)[1])
+    active = await get_active_focus_session(callback.from_user.id)
     finished = await finish_focus_session(callback.from_user.id, session_id)
 
     if not finished:
         await callback.answer("Сессия уже завершена или не найдена.", show_alert=True)
         return
 
-    await callback.message.edit_text("Фокус-сессия завершена. Хорошая точка для короткой паузы.")
+    method = active.method if active else "Focus"
+    minutes = active.duration_minutes if active else 0
+    await callback.message.edit_text(
+        await build_focus_report_text(callback.from_user.id, method, minutes),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -627,14 +665,32 @@ async def focus_cancel(callback: types.CallbackQuery):
     await callback.answer()
 
 
-async def finish_focus_later(user_id: int, session_id: int, method: str, minutes: int):
+async def finish_focus_later(
+    user_id: int,
+    session_id: int,
+    method: str,
+    minutes: int,
+    chat_id: int | None = None,
+    message_id: int | None = None,
+):
     await asyncio.sleep(minutes * 60)
     finished = await finish_focus_session(user_id, session_id)
     if finished:
+        report = await build_focus_report_text(user_id, method, minutes)
+        if chat_id and message_id:
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=report,
+                    parse_mode="HTML",
+                )
+            except TelegramBadRequest:
+                pass
+
         await bot.send_message(
             user_id,
-            f"Фокус-сессия завершена: <b>{escape(method)}</b>, {minutes} мин.\n\n"
-            "Сделай короткую паузу и отметь следующий шаг.",
+            report,
             parse_mode="HTML",
         )
 
