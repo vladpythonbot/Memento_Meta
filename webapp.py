@@ -1170,8 +1170,8 @@ MATRIX_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a class="active" href="/matrix?v=4.3">Матрица</a>
-      <a href="/focus?v=4.3">Фокус</a>
+      <a class="active" href="/matrix?v=4.4">Матрица</a>
+      <a href="/focus?v=4.4">Фокус</a>
     </nav>
 
     <header>
@@ -1738,8 +1738,8 @@ FOCUS_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a href="/matrix?v=4.3">Матрица</a>
-      <a class="active" href="/focus?v=4.3">Фокус</a>
+      <a href="/matrix?v=4.4">Матрица</a>
+      <a class="active" href="/focus?v=4.4">Фокус</a>
     </nav>
 
     <h1>Фокус</h1>
