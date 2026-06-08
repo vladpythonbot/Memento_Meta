@@ -1010,6 +1010,11 @@ MATRIX_HTML = """
       border-color: rgba(31,122,90,.45);
       box-shadow: 0 0 0 2px rgba(31,122,90,.12), var(--shadow);
     }
+    .cell.drop-target {
+      background: #f7fff3;
+      border-color: rgba(31,122,90,.62);
+      box-shadow: 0 0 0 3px rgba(31,122,90,.16), var(--shadow);
+    }
     .cell[data-q="do"] { border-top: 5px solid var(--urgent); }
     .cell[data-q="plan"] { border-top: 5px solid var(--plan); }
     .cell[data-q="delegate"] { border-top: 5px solid var(--delegate); }
@@ -1055,6 +1060,8 @@ MATRIX_HTML = """
       font: inherit;
       cursor: pointer;
       box-shadow: 0 2px 8px rgba(23,23,23,.04);
+      touch-action: none;
+      user-select: none;
     }
     .task-title { display: block; font-weight: 750; overflow-wrap: anywhere; }
     .task-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
@@ -1066,6 +1073,44 @@ MATRIX_HTML = """
     .task:hover { border-color: #bba98f; }
     .task:active { transform: translateY(1px); }
     .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.16); }
+    .task.dragging {
+      opacity: .35;
+      transform: scale(.99);
+    }
+    .task-ghost {
+      position: fixed;
+      z-index: 50;
+      width: min(280px, calc(100vw - 34px));
+      pointer-events: none;
+      transform: translate(-50%, -50%) rotate(-1deg);
+      box-shadow: 0 16px 34px rgba(23,23,23,.16);
+    }
+    .task-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      margin-top: 9px;
+    }
+    .task-action {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 8px 9px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .task-action.done {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .task-action.delete {
+      background: #fff;
+      color: var(--danger);
+      border-color: rgba(216,120,100,.45);
+    }
     .inbox {
       margin-top: 14px;
       border: 1px dashed var(--line);
@@ -1221,24 +1266,53 @@ MATRIX_HTML = """
     }
 
     function taskButton(task) {
-      const button = document.createElement("button");
-      button.className = "task" + (selected?.id === task.id ? " selected" : "");
-      button.dataset.q = task.quadrant;
-      button.textContent = task.title;
-      button.onclick = () => selectTask(task);
-      return button;
+      const card = document.createElement("article");
+      card.className = "task" + (selected?.id === task.id ? " selected" : "");
+      card.dataset.q = task.quadrant;
+      card.dataset.id = task.id;
+
+      const title = document.createElement("span");
+      title.className = "task-title";
+      title.textContent = task.title;
+
+      const meta = document.createElement("span");
+      meta.className = "task-meta";
+      meta.textContent = task.quadrant === "inbox" ? labels.inbox[1] : "Перетащи в нужный квадрат";
+
+      const actions = document.createElement("div");
+      actions.className = "task-actions";
+
+      const done = document.createElement("button");
+      done.type = "button";
+      done.className = "task-action done";
+      done.textContent = "Готово";
+      done.onclick = event => {
+        event.stopPropagation();
+        completeTaskCard(task);
+      };
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "task-action delete";
+      remove.textContent = "Удалить";
+      remove.onclick = event => {
+        event.stopPropagation();
+        deleteTaskCard(task);
+      };
+
+      actions.append(done, remove);
+      card.append(title, meta, actions);
+      card.addEventListener("pointerdown", event => startTaskDrag(event, task, card));
+      return card;
     }
 
     function selectTask(task) {
       selected = task;
-      document.getElementById("selectedTitle").textContent = task.title;
-      document.getElementById("actions").classList.add("visible");
       render();
     }
 
     function resetSelection() {
       selected = null;
-      document.getElementById("actions").classList.remove("visible");
     }
 
     function setNewTaskQuadrant(quadrant) {
@@ -1334,7 +1408,7 @@ MATRIX_HTML = """
       if (next) {
         document.getElementById("nextTitle").textContent = next.title;
         nextCard.classList.add("visible");
-        nextCard.onclick = () => selectTask(next);
+        nextCard.onclick = null;
       } else {
         nextCard.classList.remove("visible");
         nextCard.onclick = null;
@@ -1370,6 +1444,107 @@ MATRIX_HTML = """
       input.value = "";
       resetSelection();
       await load();
+    }
+
+    async function moveTaskToQuadrant(task, quadrant) {
+      if (!task || !order.includes(quadrant) || task.quadrant === quadrant) return;
+      await api(`/matrix/api/tasks/${task.id}/matrix`, {
+        method: "POST",
+        body: JSON.stringify({ quadrant })
+      });
+      task.quadrant = quadrant;
+      selected = null;
+      render();
+    }
+
+    async function completeTaskCard(task) {
+      await api(`/matrix/api/tasks/${task.id}/done`, { method: "POST" });
+      tasks = tasks.filter(item => item.id !== task.id);
+      if (selected?.id === task.id) resetSelection();
+      render();
+    }
+
+    async function deleteTaskCard(task) {
+      await api(`/matrix/api/tasks/${task.id}`, { method: "DELETE" });
+      tasks = tasks.filter(item => item.id !== task.id);
+      if (selected?.id === task.id) resetSelection();
+      render();
+    }
+
+    function clearDropTargets() {
+      document.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
+    }
+
+    function dropTargetAt(x, y) {
+      const element = document.elementFromPoint(x, y);
+      const cell = element?.closest?.(".cell");
+      const quadrant = cell?.dataset?.q;
+      return order.includes(quadrant) ? cell : null;
+    }
+
+    function startTaskDrag(event, task, card) {
+      if (event.button !== undefined && event.button !== 0) return;
+      if (event.target.closest(".task-action")) return;
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let dragging = false;
+      let ghost = null;
+
+      const move = moveEvent => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        if (!dragging && Math.hypot(dx, dy) < 8) return;
+        moveEvent.preventDefault();
+
+        if (!dragging) {
+          dragging = true;
+          card.classList.add("dragging");
+          ghost = card.cloneNode(true);
+          ghost.classList.add("task-ghost");
+          ghost.querySelectorAll("button").forEach(button => button.remove());
+          document.body.appendChild(ghost);
+        }
+
+        ghost.style.left = `${moveEvent.clientX}px`;
+        ghost.style.top = `${moveEvent.clientY}px`;
+        clearDropTargets();
+        dropTargetAt(moveEvent.clientX, moveEvent.clientY)?.classList.add("drop-target");
+      };
+
+      const end = async endEvent => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", cancel);
+        card.releasePointerCapture?.(event.pointerId);
+        card.classList.remove("dragging");
+        ghost?.remove();
+
+        const target = dropTargetAt(endEvent.clientX, endEvent.clientY);
+        clearDropTargets();
+        if (dragging && target) {
+          try {
+            await moveTaskToQuadrant(task, target.dataset.q);
+            tg?.HapticFeedback?.impactOccurred?.("light");
+          } catch (_error) {
+            await load();
+          }
+        }
+      };
+
+      const cancel = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", cancel);
+        card.classList.remove("dragging");
+        ghost?.remove();
+        clearDropTargets();
+      };
+
+      card.setPointerCapture?.(event.pointerId);
+      window.addEventListener("pointermove", move, { passive: false });
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", cancel);
     }
 
     document.querySelectorAll(".action").forEach(button => {
