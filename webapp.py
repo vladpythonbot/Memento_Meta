@@ -554,6 +554,7 @@ MATRIX_HTML = """
       gap: 7px;
       margin-top: 9px;
     }
+    .task:not(.selected) .task-actions { display: none; }
     .task-action {
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -604,8 +605,8 @@ MATRIX_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a class="active" href="/matrix?v=4.6">Матрица</a>
-      <a href="/focus?v=4.6">Фокус</a>
+      <a class="active" href="/matrix?v=4.7">Матрица</a>
+      <a href="/focus?v=4.7">Фокус</a>
     </nav>
 
     <header>
@@ -988,6 +989,8 @@ MATRIX_HTML = """
           } catch (_error) {
             await load();
           }
+        } else if (!dragging) {
+          selectTask(selected?.id === task.id ? null : task);
         }
       };
 
@@ -1165,8 +1168,8 @@ FOCUS_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a href="/matrix?v=4.6">Матрица</a>
-      <a class="active" href="/focus?v=4.6">Фокус</a>
+      <a href="/matrix?v=4.7">Матрица</a>
+      <a class="active" href="/focus?v=4.7">Фокус</a>
     </nav>
 
     <h1>Фокус</h1>
