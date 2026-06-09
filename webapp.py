@@ -35,7 +35,7 @@ QUADRANTS = {
 async def start_webapp() -> web.AppRunner:
     app = web.Application()
     app.router.add_get("/", health)
-    app.router.add_get("/app", app_page)
+    app.router.add_get("/app", matrix_page)
     app.router.add_get("/app/api/overview", api_overview)
     app.router.add_get("/matrix", matrix_page)
     app.router.add_get("/focus", focus_page)
@@ -1062,6 +1062,7 @@ MATRIX_HTML = """
       box-shadow: 0 2px 8px rgba(23,23,23,.04);
       touch-action: none;
       user-select: none;
+      -webkit-user-drag: element;
     }
     .task-title { display: block; font-weight: 750; overflow-wrap: anywhere; }
     .task-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
@@ -1170,8 +1171,8 @@ MATRIX_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a class="active" href="/matrix?v=4.4">Матрица</a>
-      <a href="/focus?v=4.4">Фокус</a>
+      <a class="active" href="/matrix?v=4.5">Матрица</a>
+      <a href="/focus?v=4.5">Фокус</a>
     </nav>
 
     <header>
@@ -1219,18 +1220,6 @@ MATRIX_HTML = """
       <section class="grid" id="grid"></section>
     </section>
     <section class="inbox" id="inbox"></section>
-
-    <section class="actions" id="actions">
-      <div class="actions-title" id="selectedTitle"></div>
-      <div class="action-grid">
-        <button class="action" data-q="do">Сделать</button>
-        <button class="action" data-q="plan">План</button>
-        <button class="action" data-q="delegate">Делегировать</button>
-        <button class="action" data-q="drop">Убрать</button>
-      </div>
-      <button class="action done-action" id="completeTask">Готово</button>
-      <button class="action delete-action" id="deleteTask">Удалить</button>
-    </section>
   </main>
 
   <script>
@@ -1270,6 +1259,7 @@ MATRIX_HTML = """
       card.className = "task" + (selected?.id === task.id ? " selected" : "");
       card.dataset.q = task.quadrant;
       card.dataset.id = task.id;
+      card.draggable = true;
 
       const title = document.createElement("span");
       title.className = "task-title";
@@ -1302,6 +1292,15 @@ MATRIX_HTML = """
 
       actions.append(done, remove);
       card.append(title, meta, actions);
+      card.addEventListener("dragstart", event => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", String(task.id));
+        card.classList.add("dragging");
+      });
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        clearDropTargets();
+      });
       card.addEventListener("pointerdown", event => startTaskDrag(event, task, card));
       return card;
     }
@@ -1346,6 +1345,26 @@ MATRIX_HTML = """
         event.stopPropagation();
         setNewTaskQuadrant(quadrant);
       };
+      cell.addEventListener("dragover", event => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        cell.classList.add("drop-target");
+      });
+      cell.addEventListener("dragleave", event => {
+        if (!cell.contains(event.relatedTarget)) cell.classList.remove("drop-target");
+      });
+      cell.addEventListener("drop", async event => {
+        event.preventDefault();
+        clearDropTargets();
+        const taskId = Number(event.dataTransfer.getData("text/plain"));
+        const task = tasks.find(item => item.id === taskId);
+        if (!task) return;
+        try {
+          await moveTaskToQuadrant(task, quadrant);
+        } catch (_error) {
+          await load();
+        }
+      });
       if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "empty";
@@ -1516,7 +1535,6 @@ MATRIX_HTML = """
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", end);
         window.removeEventListener("pointercancel", cancel);
-        card.releasePointerCapture?.(event.pointerId);
         card.classList.remove("dragging");
         ghost?.remove();
 
@@ -1541,42 +1559,10 @@ MATRIX_HTML = """
         clearDropTargets();
       };
 
-      card.setPointerCapture?.(event.pointerId);
       window.addEventListener("pointermove", move, { passive: false });
       window.addEventListener("pointerup", end);
       window.addEventListener("pointercancel", cancel);
     }
-
-    document.querySelectorAll(".action").forEach(button => {
-      button.onclick = async () => {
-        if (!selected) return;
-        const quadrant = button.dataset.q;
-        await api(`/matrix/api/tasks/${selected.id}/matrix`, {
-          method: "POST",
-          body: JSON.stringify({ quadrant })
-        });
-        selected.quadrant = quadrant;
-        resetSelection();
-        render();
-      };
-    });
-
-    document.getElementById("completeTask").onclick = async () => {
-      if (!selected) return;
-      await api(`/matrix/api/tasks/${selected.id}/done`, { method: "POST" });
-      tasks = tasks.filter(task => task.id !== selected.id);
-      resetSelection();
-      render();
-    };
-
-    document.getElementById("deleteTask").onclick = async () => {
-      if (!selected) return;
-      const task = selected;
-      await api(`/matrix/api/tasks/${task.id}`, { method: "DELETE" });
-      tasks = tasks.filter(item => item.id !== task.id);
-      resetSelection();
-      render();
-    };
 
     document.getElementById("addTask").onclick = createTask;
     document.getElementById("taskInput").addEventListener("keydown", event => {
@@ -1738,8 +1724,8 @@ FOCUS_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a href="/matrix?v=4.4">Матрица</a>
-      <a class="active" href="/focus?v=4.4">Фокус</a>
+      <a href="/matrix?v=4.5">Матрица</a>
+      <a class="active" href="/focus?v=4.5">Фокус</a>
     </nav>
 
     <h1>Фокус</h1>
