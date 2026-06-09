@@ -397,37 +397,7 @@ MATRIX_HTML = """
       cursor: pointer;
     }
     .chip.active { border-color: var(--accent); background: #eef7f1; color: #14583f; font-weight: 750; }
-    .workspace-controls {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .search-input {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      background: rgba(255,255,255,.86);
-      color: var(--ink);
-      padding: 10px 11px;
-      font: inherit;
-      outline: none;
-    }
-    .search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
-    .filter-row { display: flex; gap: 6px; overflow-x: auto; }
-    .next-card {
-      display: none;
-      border: 1px solid var(--line);
-      border-left: 5px solid var(--accent);
-      border-radius: 8px;
-      background: rgba(255,253,248,.86);
-      padding: 11px 12px;
-      margin-bottom: 12px;
-      box-shadow: var(--shadow);
-    }
-    .next-card.visible { display: block; }
-    .next-label { color: var(--muted); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; }
-    .next-title { margin-top: 4px; font-weight: 850; }
+    .filter-row { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
     .toolbar {
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -461,6 +431,7 @@ MATRIX_HTML = """
       gap: 12px;
       align-items: stretch;
     }
+    .grid.focused { grid-template-columns: minmax(0, 1fr); }
     .cell {
       min-height: 255px;
       background: var(--card);
@@ -599,7 +570,6 @@ MATRIX_HTML = """
       h1 { font-size: 22px; }
       .input-row { grid-template-columns: 1fr; }
       .add-button { min-height: 42px; }
-      .workspace-controls { grid-template-columns: 1fr; }
       .filter-row,
       .chips { scrollbar-width: none; }
       .filter-row::-webkit-scrollbar,
@@ -614,6 +584,7 @@ MATRIX_HTML = """
       .matrix-shell { padding-left: 0; overflow-x: auto; padding-bottom: 2px; }
       .axis-left { display: none; }
       .grid { grid-template-columns: repeat(2, minmax(142px, 1fr)); gap: 8px; min-width: 292px; }
+      .grid.focused { grid-template-columns: minmax(0, 1fr); min-width: 0; }
       .cell { min-height: 168px; padding: 9px; }
       .cell-head { gap: 6px; margin-bottom: 6px; }
       .cell-title { font-size: 14px; }
@@ -629,8 +600,8 @@ MATRIX_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a class="active" href="/matrix?v=4.8">Матрица</a>
-      <a href="/focus?v=4.8">Фокус</a>
+      <a class="active" href="/matrix?v=4.9">Матрица</a>
+      <a href="/focus?v=4.9">Фокус</a>
     </nav>
 
     <header>
@@ -654,21 +625,13 @@ MATRIX_HTML = """
       </div>
     </section>
 
-    <section class="workspace-controls">
-      <input class="search-input" id="taskSearch" placeholder="Найти задачу">
-      <div class="filter-row" id="viewFilters">
-        <button class="chip active" data-filter="all">Все</button>
-        <button class="chip" data-filter="inbox">Входящие</button>
-        <button class="chip" data-filter="do">Сделать</button>
-        <button class="chip" data-filter="plan">План</button>
-        <button class="chip" data-filter="delegate">Делегировать</button>
-        <button class="chip" data-filter="drop">Убрать</button>
-      </div>
-    </section>
-
-    <section class="next-card" id="nextCard">
-      <div class="next-label">Следующий шаг</div>
-      <div class="next-title" id="nextTitle"></div>
+    <section class="filter-row" id="viewFilters">
+      <button class="chip active" data-filter="all">Все</button>
+      <button class="chip" data-filter="inbox">Входящие</button>
+      <button class="chip" data-filter="do">Сделать</button>
+      <button class="chip" data-filter="plan">План</button>
+      <button class="chip" data-filter="delegate">Делегировать</button>
+      <button class="chip" data-filter="drop">Убрать</button>
     </section>
 
     <section class="toolbar" id="summary"></section>
@@ -696,7 +659,6 @@ MATRIX_HTML = """
     let selected = null;
     let newTaskQuadrant = "inbox";
     let viewFilter = "all";
-    let searchQuery = "";
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -842,24 +804,17 @@ MATRIX_HTML = """
 
     function visibleTasks() {
       return tasks.filter(task => {
-        const byFilter = viewFilter === "all" || task.quadrant === viewFilter;
-        const bySearch = !searchQuery || task.title.toLowerCase().includes(searchQuery);
-        return byFilter && bySearch;
+        return viewFilter === "all" || task.quadrant === viewFilter;
       });
-    }
-
-    function nextTask() {
-      return tasks.find(task => task.quadrant === "do")
-        || tasks.find(task => task.quadrant === "plan")
-        || tasks.find(task => task.quadrant === "inbox")
-        || tasks[0]
-        || null;
     }
 
     function render() {
       const grid = document.getElementById("grid");
       grid.innerHTML = "";
-      order.forEach(quadrant => grid.appendChild(renderCell(quadrant)));
+      grid.closest(".matrix-shell").hidden = viewFilter === "inbox";
+      const visibleOrder = viewFilter === "all" || viewFilter === "inbox" ? order : [viewFilter];
+      grid.classList.toggle("focused", visibleOrder.length === 1);
+      visibleOrder.forEach(quadrant => grid.appendChild(renderCell(quadrant)));
 
       const summary = document.getElementById("summary");
       const values = [
@@ -878,6 +833,7 @@ MATRIX_HTML = """
 
       const inboxItems = visibleTasks().filter(task => task.quadrant === "inbox");
       const inbox = document.getElementById("inbox");
+      inbox.hidden = viewFilter !== "all" && viewFilter !== "inbox";
       inbox.innerHTML = `<div class="cell-head"><div><div class="cell-title">Без квадранта</div><div class="count">разбери позже или сейчас</div></div><div class="count">${inboxItems.length}</div></div>`;
       if (!inboxItems.length) {
         const empty = document.createElement("div");
@@ -887,16 +843,6 @@ MATRIX_HTML = """
       }
       inboxItems.forEach(task => inbox.appendChild(taskButton(task)));
 
-      const next = nextTask();
-      const nextCard = document.getElementById("nextCard");
-      if (next) {
-        document.getElementById("nextTitle").textContent = next.title;
-        nextCard.classList.add("visible");
-        nextCard.onclick = null;
-      } else {
-        nextCard.classList.remove("visible");
-        nextCard.onclick = null;
-      }
     }
 
     async function load() {
@@ -1055,11 +1001,6 @@ MATRIX_HTML = """
       };
     });
 
-    document.getElementById("taskSearch").addEventListener("input", event => {
-      searchQuery = event.target.value.trim().toLowerCase();
-      render();
-    });
-
     load();
   </script>
 </body>
@@ -1191,8 +1132,8 @@ FOCUS_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a href="/matrix?v=4.8">Матрица</a>
-      <a class="active" href="/focus?v=4.8">Фокус</a>
+      <a href="/matrix?v=4.9">Матрица</a>
+      <a class="active" href="/focus?v=4.9">Фокус</a>
     </nav>
 
     <h1>Фокус</h1>
