@@ -69,6 +69,11 @@ def is_command_text(text: str) -> bool:
     return text.strip().startswith("/")
 
 
+def split_capture_items(text: str) -> list[str]:
+    items = [line.strip(" -•\t") for line in text.splitlines()]
+    return [item for item in items if len(item) >= 2]
+
+
 class CaptureState(StatesGroup):
     wait_text = State()
 
@@ -104,7 +109,7 @@ async def help_command(message: types.Message):
         "Коротко:\n\n"
         "🧭 Панель — задачи, матрица и фокус в Web App.\n"
         "📝 Записать — сохранить мысль или задачу.\n\n"
-        "Просто отправь текст — я сохраню его как заметку."
+        "Просто отправь текст — я покажу выбор: заметка или задача."
     )
 
 
@@ -115,7 +120,7 @@ async def settings(message: types.Message):
         "Язык: русский\n"
         "Фокус-методы: Pomodoro, Short Focus, Deep Work\n"
         "Методы планирования: матрица Эйзенхауэра\n"
-        "Свободный текст: сразу сохраняется, как в «Избранном»"
+        "Свободный текст: сначала становится черновиком, потом выбираешь заметку или задачу"
     )
 
 
@@ -159,8 +164,8 @@ async def matrix(message: types.Message):
 async def capture_start(message: types.Message, state: FSMContext):
     await state.set_state(CaptureState.wait_text)
     await message.answer(
-        "Напиши мысль или задачу одним сообщением.\n\n"
-        "После этого выберем, что с ней сделать."
+        "Напиши текст одним сообщением.\n\n"
+        "Можно одной строкой или списком: каждая задача с новой строки. После отправки выберешь, что с этим сделать."
     )
 
 
@@ -233,21 +238,36 @@ async def handle_navigation_during_capture(message: types.Message, state: FSMCon
 
 @router.message(CaptureState.wait_text)
 async def capture_text(message: types.Message, state: FSMContext):
-    text = (message.text or "").strip()
+    text = (message.text or message.caption or "").strip()
     if await handle_navigation_during_capture(message, state, text):
         return
 
+    await ask_capture_type(message, state, text)
+
+
+async def ask_capture_type(message: types.Message, state: FSMContext, text: str):
     if len(text) < 2:
         await message.answer("Слишком коротко. Напиши чуть подробнее.")
         return
 
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    await state.set_state(CaptureState.wait_text)
     await state.update_data(captured_text=text)
+    items = split_capture_items(text)
+    hint = "Если выбрать задачи, создам несколько задач по строкам." if len(items) > 1 else "Если выбрать задачу, потом разнесёшь её в матрице."
     await message.answer(
         f"Записал:\n\n<b>{escape(text)}</b>\n\n"
-        "Оставляем как заметку или делаем задачей?",
+        f"{hint}\n\nЧто это?",
         parse_mode="HTML",
         reply_markup=capture_type_keyboard(),
     )
+
+
+@router.callback_query(F.data == "capture_cancel")
+async def capture_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("Отменил.")
+    await callback.answer()
 
 
 @router.callback_query(F.data.in_({"capture_note", "capture_task"}))
@@ -264,12 +284,27 @@ async def capture_save(callback: types.CallbackQuery, state: FSMContext):
         await add_note(callback.from_user.id, text)
         await callback.message.edit_text("Заметка сохранена.")
     else:
-        task_id = await add_task(callback.from_user.id, text)
-        await callback.message.edit_text(
-            f"Задача добавлена:\n\n<b>{escape(text)}</b>",
-            parse_mode="HTML",
-            reply_markup=task_actions_keyboard(task_id),
-        )
+        items = split_capture_items(text) or [text]
+        task_ids = []
+        for item in items:
+            task_ids.append(await add_task(callback.from_user.id, item))
+
+        if len(task_ids) == 1:
+            await callback.message.edit_text(
+                f"Задача добавлена:\n\n<b>{escape(items[0])}</b>\n\n"
+                "Теперь можно отметить готовой или разнести в матрицу.",
+                parse_mode="HTML",
+                reply_markup=task_actions_keyboard(task_ids[0]),
+            )
+        else:
+            preview = "\n".join(f"• {escape(item)}" for item in items[:8])
+            tail = f"\n• ... ещё {len(items) - 8}" if len(items) > 8 else ""
+            await callback.message.edit_text(
+                f"Добавил задач: <b>{len(items)}</b>\n\n{preview}{tail}\n\n"
+                "Открой матрицу и разнеси их по квадратам.",
+                parse_mode="HTML",
+                reply_markup=matrix_tasks_keyboard([], WEBAPP_URL or None),
+            )
 
     await state.clear()
     await callback.answer()
@@ -803,7 +838,4 @@ async def free_text(message: types.Message, state: FSMContext):
         await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
         return
 
-    await state.clear()
-    await ensure_user(message.from_user.id, message.from_user.first_name)
-    await add_note(message.from_user.id, text)
-    await message.answer("Сохранено.")
+    await ask_capture_type(message, state, text)

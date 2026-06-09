@@ -41,8 +41,9 @@ def capture_type_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="Заметка", callback_data="capture_note"),
-                InlineKeyboardButton(text="Задача", callback_data="capture_task"),
+                InlineKeyboardButton(text="Задача/задачи", callback_data="capture_task"),
             ],
+            [InlineKeyboardButton(text="Отмена", callback_data="capture_cancel")],
         ]
     )
 
