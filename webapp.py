@@ -337,7 +337,7 @@ MATRIX_HTML = """
       color: var(--ink);
       font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    .app { padding: 18px; max-width: 1040px; margin: 0 auto; }
+    .app { padding: 18px; max-width: 1120px; margin: 0 auto; }
     .nav { display: flex; gap: 8px; margin-bottom: 14px; }
     .nav a {
       text-decoration: none;
@@ -444,7 +444,7 @@ MATRIX_HTML = """
     .summary-label { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .matrix-shell {
       position: relative;
-      padding: 28px 0 0 30px;
+      padding: 0 0 0 28px;
     }
     .axis {
       position: absolute;
@@ -454,11 +454,15 @@ MATRIX_HTML = """
       text-transform: uppercase;
       letter-spacing: .04em;
     }
-    .axis-top { top: 6px; left: 50%; transform: translateX(-50%); }
     .axis-left { left: 0; top: 50%; transform: translateY(-50%) rotate(-90deg); transform-origin: center; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
     .cell {
-      min-height: 235px;
+      min-height: 255px;
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -583,6 +587,12 @@ MATRIX_HTML = """
       background: rgba(255,255,255,.58);
     }
     .empty { color: var(--muted); padding: 10px 0; }
+    @media (min-width: 900px) {
+      .app { padding: 22px; }
+      .matrix-shell { padding-left: 32px; }
+      .cell { min-height: 285px; }
+      .task { padding: 11px 12px; }
+    }
     @media (max-width: 640px) {
       .app { padding: 14px; }
       header { display: block; }
@@ -590,23 +600,37 @@ MATRIX_HTML = """
       .input-row { grid-template-columns: 1fr; }
       .add-button { min-height: 42px; }
       .workspace-controls { grid-template-columns: 1fr; }
-      .toolbar { grid-template-columns: repeat(5, minmax(54px, 1fr)); overflow-x: auto; padding-bottom: 2px; }
+      .filter-row,
+      .chips { scrollbar-width: none; }
+      .filter-row::-webkit-scrollbar,
+      .chips::-webkit-scrollbar { display: none; }
+      .toolbar {
+        grid-template-columns: repeat(5, minmax(62px, 1fr));
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
       .summary-item { min-width: 68px; padding: 8px; }
       .summary-value { font-size: 18px; }
-      .matrix-shell { padding-left: 0; padding-top: 22px; }
+      .matrix-shell { padding-left: 0; overflow-x: auto; padding-bottom: 2px; }
       .axis-left { display: none; }
-      .grid { gap: 8px; }
-      .cell { min-height: 190px; padding: 10px; }
+      .grid { grid-template-columns: repeat(2, minmax(142px, 1fr)); gap: 8px; min-width: 292px; }
+      .cell { min-height: 168px; padding: 9px; }
+      .cell-head { gap: 6px; margin-bottom: 6px; }
       .cell-title { font-size: 14px; }
-      .task { font-size: 14px; padding: 8px; }
+      .count { font-size: 12px; }
+      .cell-add { width: 28px; height: 28px; }
+      .count-pill { min-width: 26px; height: 26px; }
+      .task { font-size: 14px; padding: 8px; margin: 6px 0; }
+      .task-meta { font-size: 11px; }
+      .task-action { padding: 8px 7px; font-size: 12px; }
     }
   </style>
 </head>
 <body>
   <main class="app">
     <nav class="nav">
-      <a class="active" href="/matrix?v=4.7">Матрица</a>
-      <a href="/focus?v=4.7">Фокус</a>
+      <a class="active" href="/matrix?v=4.8">Матрица</a>
+      <a href="/focus?v=4.8">Фокус</a>
     </nav>
 
     <header>
@@ -649,7 +673,6 @@ MATRIX_HTML = """
 
     <section class="toolbar" id="summary"></section>
     <section class="matrix-shell">
-      <div class="axis axis-top">Срочно</div>
       <div class="axis axis-left">Важно</div>
       <section class="grid" id="grid"></section>
     </section>
@@ -1168,8 +1191,8 @@ FOCUS_HTML = """
 <body>
   <main class="app">
     <nav class="nav">
-      <a href="/matrix?v=4.7">Матрица</a>
-      <a class="active" href="/focus?v=4.7">Фокус</a>
+      <a href="/matrix?v=4.8">Матрица</a>
+      <a class="active" href="/focus?v=4.8">Фокус</a>
     </nav>
 
     <h1>Фокус</h1>
