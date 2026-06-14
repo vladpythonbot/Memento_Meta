@@ -171,6 +171,17 @@ async def update_task_matrix(user_id: int, task_id: int, important: bool, urgent
         return cursor.rowcount > 0
 
 
+async def clear_task_matrix(user_id: int, task_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            UPDATE tasks
+            SET important = NULL, urgent = NULL
+            WHERE id = ? AND user_id = ? AND status = 'open'
+        """, (task_id, user_id))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_open_tasks(user_id: int, limit: int = 10) -> list[Task]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""

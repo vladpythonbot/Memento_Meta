@@ -12,11 +12,9 @@ from aiogram.fsm.state import State, StatesGroup
 from bot import bot
 from config import WEBAPP_URL
 from db import (
-    add_note,
     add_task,
     cancel_focus_session,
     complete_task,
-    delete_note,
     ensure_user,
     finish_focus_session,
     get_daily_summary,
@@ -25,7 +23,6 @@ from db import (
     get_next_action_task,
     get_open_tasks,
     get_period_summary,
-    get_recent_notes,
     start_focus_session,
     update_task_matrix,
 )
@@ -35,19 +32,13 @@ from keyboards import (
     BTN_FOCUS,
     BTN_MATRIX,
     BTN_REVIEW,
-    BTN_SAVED,
     BTN_SUMMARY,
     BTN_TODAY,
     active_focus_keyboard,
     app_links_keyboard,
-    capture_type_keyboard,
     focus_methods_keyboard,
     main_keyboard,
     matrix_choice_keyboard,
-    matrix_tasks_keyboard,
-    saved_notes_keyboard,
-    task_actions_keyboard,
-    today_tasks_keyboard,
 )
 
 
@@ -87,14 +78,13 @@ async def save_quick_tasks(message: types.Message, state: FSMContext, text: str)
 
     if len(task_ids) == 1:
         await message.answer(
-            f"Добавил в инбокс:\n\n<b>{escape(items[0])}</b>",
+            f"Добавил во входящие:\n\n<b>{escape(items[0])}</b>",
             parse_mode="HTML",
-            reply_markup=task_actions_keyboard(task_ids[0]),
         )
         return
 
     await message.answer(
-        f"Добавил в инбокс: <b>{len(task_ids)}</b>\n\nРазберёшь их в панели.",
+        f"Добавил во входящие: <b>{len(task_ids)}</b>\n\nРазберёшь их в панели.",
         parse_mode="HTML",
         reply_markup=app_links_keyboard(WEBAPP_URL or None),
     )
@@ -113,7 +103,7 @@ async def start(message: types.Message, state: FSMContext):
     await message.answer(
         f"Привет, {escape(name)}.\n\n"
         "Я Noto Memento.\n\n"
-        "Пиши сюда мысль, задачу или список — я сложу в инбокс. Разбор, матрица и фокус живут в панели.",
+        "Пиши сюда мысль, задачу или список — я сложу во входящие. Разбор, матрица и фокус живут в панели.",
         reply_markup=main_keyboard,
     )
 
@@ -133,10 +123,9 @@ async def app_home(message: types.Message):
 async def help_command(message: types.Message):
     await message.answer(
         "Коротко:\n\n"
-        "Просто отправь текст — я положу его в инбокс.\n"
+        "Просто отправь текст — я положу его во входящие.\n"
         "Несколько строк — несколько пунктов.\n"
-        "🧭 Панель — инбокс, матрица, заметки и фокус.\n"
-        "/note текст — сохранить как заметку."
+        "🧭 Панель — входящие, матрица и фокус."
     )
 
 
@@ -147,20 +136,8 @@ async def settings(message: types.Message):
         "Язык: русский\n"
         "Фокус-методы: Pomodoro, Short Focus, Deep Work\n"
         "Методы планирования: матрица Эйзенхауэра\n"
-        "Свободный текст: сразу попадает в инбокс"
+        "Свободный текст: сразу попадает во входящие"
     )
-
-
-@router.message(Command("note"))
-async def quick_note(message: types.Message):
-    text = message.text.partition(" ")[2].strip() if message.text else ""
-    if not text:
-        await message.answer("Напиши так: <code>/note идея для проекта</code>", parse_mode="HTML")
-        return
-
-    await ensure_user(message.from_user.id, message.from_user.first_name)
-    await add_note(message.from_user.id, text)
-    await message.answer("Заметка сохранена.")
 
 
 @router.message(Command("task"))
@@ -171,11 +148,10 @@ async def quick_task(message: types.Message):
         return
 
     await ensure_user(message.from_user.id, message.from_user.first_name)
-    task_id = await add_task(message.from_user.id, text)
+    await add_task(message.from_user.id, text)
     await message.answer(
-        f"Задача добавлена:\n\n<b>{escape(text)}</b>",
+        f"Добавил во входящие:\n\n<b>{escape(text)}</b>",
         parse_mode="HTML",
-        reply_markup=task_actions_keyboard(task_id),
     )
 
 
@@ -221,10 +197,6 @@ async def handle_navigation_during_capture(message: types.Message, state: FSMCon
         await state.clear()
         await review(message)
         return True
-    if text == BTN_SAVED:
-        await state.clear()
-        await saved(message)
-        return True
     if text == BTN_CAPTURE:
         await capture_start(message, state)
         return True
@@ -241,8 +213,6 @@ async def handle_navigation_during_capture(message: types.Message, state: FSMCon
         await help_command(message)
     elif command == "/settings":
         await settings(message)
-    elif command == "/note":
-        await quick_note(message)
     elif command == "/task":
         await quick_task(message)
     elif command in {"/matrix", "/eisenhower"}:
@@ -255,8 +225,6 @@ async def handle_navigation_during_capture(message: types.Message, state: FSMCon
         await summary(message)
     elif command == "/review":
         await review(message)
-    elif command == "/saved":
-        await saved(message)
     else:
         await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
 
@@ -272,71 +240,6 @@ async def capture_text(message: types.Message, state: FSMContext):
     await save_quick_tasks(message, state, text)
 
 
-async def ask_capture_type(message: types.Message, state: FSMContext, text: str):
-    if len(text) < 2:
-        await message.answer("Слишком коротко. Напиши чуть подробнее.")
-        return
-
-    await ensure_user(message.from_user.id, message.from_user.first_name)
-    await state.set_state(CaptureState.wait_text)
-    await state.update_data(captured_text=text)
-    items = split_capture_items(text)
-    hint = "Если выбрать задачи, создам несколько задач по строкам." if len(items) > 1 else "Если выбрать задачу, потом разнесёшь её в матрице."
-    await message.answer(
-        f"Записал:\n\n<b>{escape(text)}</b>\n\n"
-        f"{hint}\n\nЧто это?",
-        parse_mode="HTML",
-        reply_markup=capture_type_keyboard(),
-    )
-
-
-@router.callback_query(F.data == "capture_cancel")
-async def capture_cancel(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("Отменил.")
-    await callback.answer()
-
-
-@router.callback_query(F.data.in_({"capture_note", "capture_task"}))
-async def capture_save(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    text = data.get("captured_text")
-
-    if not text:
-        await callback.answer("Текст не найден. Нажми «Записать» ещё раз.", show_alert=True)
-        await state.clear()
-        return
-
-    if callback.data == "capture_note":
-        await add_note(callback.from_user.id, text)
-        await callback.message.edit_text("Заметка сохранена.")
-    else:
-        items = split_capture_items(text) or [text]
-        task_ids = []
-        for item in items:
-            task_ids.append(await add_task(callback.from_user.id, item))
-
-        if len(task_ids) == 1:
-            await callback.message.edit_text(
-                f"Задача добавлена:\n\n<b>{escape(items[0])}</b>\n\n"
-                "Теперь можно отметить готовой или разнести в матрицу.",
-                parse_mode="HTML",
-                reply_markup=task_actions_keyboard(task_ids[0]),
-            )
-        else:
-            preview = "\n".join(f"• {escape(item)}" for item in items[:8])
-            tail = f"\n• ... ещё {len(items) - 8}" if len(items) > 8 else ""
-            await callback.message.edit_text(
-                f"Добавил задач: <b>{len(items)}</b>\n\n{preview}{tail}\n\n"
-                "Открой матрицу и разнеси их по квадратам.",
-                parse_mode="HTML",
-                reply_markup=matrix_tasks_keyboard([], WEBAPP_URL or None),
-            )
-
-    await state.clear()
-    await callback.answer()
-
-
 @router.message(F.text == BTN_TODAY)
 @router.message(Command("today"))
 async def today(message: types.Message):
@@ -347,7 +250,6 @@ async def today(message: types.Message):
 
 async def build_today_view(user_id: int):
     tasks = await get_open_tasks(user_id, limit=7)
-    notes = await get_recent_notes(user_id, limit=3)
     summary = await get_daily_summary(user_id)
     next_task = await get_next_action_task(user_id)
     active_focus = await get_active_focus_session(user_id)
@@ -370,81 +272,13 @@ async def build_today_view(user_id: int):
     else:
         lines.append("Задач на сегодня пока нет.")
 
-    if notes:
-        lines.append("")
-        lines.append("<b>Свежие заметки</b>")
-        for note in notes:
-            preview = note.body if len(note.body) <= 70 else note.body[:67] + "..."
-            lines.append(f"• {escape(preview)}")
-
     lines.append("")
     lines.append(
         f"Итог: {summary['done_tasks']} готово · "
-        f"{summary['focus_minutes']} мин фокуса · "
-        f"{summary['notes']} заметок"
+        f"{summary['focus_minutes']} мин фокуса"
     )
 
-    return "\n".join(lines), today_tasks_keyboard(tasks)
-
-
-@router.message(F.text == BTN_SAVED)
-@router.message(Command("saved"))
-async def saved(message: types.Message):
-    await ensure_user(message.from_user.id, message.from_user.first_name)
-    notes = await get_recent_notes(message.from_user.id, limit=12)
-
-    if not notes:
-        await message.answer(
-            "🗂 <b>Сохранённое</b>\n\n"
-            "Пока пусто. Просто отправь мне текст, и я сохраню его сюда.",
-            parse_mode="HTML",
-        )
-        return
-
-    lines = ["🗂 <b>Сохранённое</b>", ""]
-    for index, note in enumerate(notes, start=1):
-        preview = note.body if len(note.body) <= 120 else note.body[:117] + "..."
-        lines.append(f"{index}. {escape(preview)}")
-
-    lines.extend([
-        "",
-        "Чтобы сделать задачу: <code>/task текст задачи</code>",
-    ])
-    await message.answer(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=saved_notes_keyboard(notes),
-    )
-
-
-@router.callback_query(F.data.startswith("note_delete:"))
-async def note_delete(callback: types.CallbackQuery):
-    note_id = int(callback.data.split(":", 1)[1])
-    deleted = await delete_note(callback.from_user.id, note_id)
-
-    if not deleted:
-        await callback.answer("Заметка уже удалена или не найдена.", show_alert=True)
-        return
-
-    notes = await get_recent_notes(callback.from_user.id, limit=12)
-    if not notes:
-        await callback.message.edit_text(
-            "🗂 <b>Сохранённое</b>\n\nПока пусто.",
-            parse_mode="HTML",
-        )
-    else:
-        lines = ["🗂 <b>Сохранённое</b>", ""]
-        for index, note in enumerate(notes, start=1):
-            preview = note.body if len(note.body) <= 120 else note.body[:117] + "..."
-            lines.append(f"{index}. {escape(preview)}")
-        lines.extend(["", "Чтобы сделать задачу: <code>/task текст задачи</code>"])
-        await callback.message.edit_text(
-            "\n".join(lines),
-            parse_mode="HTML",
-            reply_markup=saved_notes_keyboard(notes),
-        )
-
-    await callback.answer("Удалено.")
+    return "\n".join(lines), app_links_keyboard(WEBAPP_URL or None)
 
 
 def matrix_badge(task) -> str:
@@ -466,8 +300,8 @@ async def build_matrix_view(user_id: int):
         return "\n".join([
             "🧭 <b>Матрица Эйзенхауэра</b>",
             "",
-            "Открытых задач пока нет. Добавь задачу через /task или кнопку 📝 Записать.",
-        ]), matrix_tasks_keyboard(tasks, WEBAPP_URL or None)
+            "Открытых задач пока нет. Просто напиши задачу в чат.",
+        ]), app_links_keyboard(WEBAPP_URL or None)
 
     counts = count_matrix_tasks(tasks)
     lines = [
@@ -482,7 +316,7 @@ async def build_matrix_view(user_id: int):
         f"▫️ Без квадранта: <b>{counts['inbox']}</b>",
     ]
 
-    return "\n".join(lines), matrix_tasks_keyboard(tasks, WEBAPP_URL or None)
+    return "\n".join(lines), app_links_keyboard(WEBAPP_URL or None)
 
 
 def count_matrix_tasks(tasks) -> dict[str, int]:
@@ -658,7 +492,6 @@ async def build_focus_report_text(user_id: int, method: str, minutes: int) -> st
         "📊 <b>Итог дня</b>\n"
         f"Готовые задачи: <b>{data['done_tasks']}</b>\n"
         f"Открытые задачи: <b>{data['open_tasks']}</b>\n"
-        f"Заметки: <b>{data['notes']}</b>\n"
         f"Фокус: <b>{data['focus_minutes']} мин</b>\n\n"
         "Сделай короткую паузу и выбери следующий шаг."
     )
@@ -765,7 +598,6 @@ async def summary(message: types.Message):
         "📊 <b>Итог дня</b>\n\n"
         f"Готовые задачи: <b>{data['done_tasks']}</b>\n"
         f"Открытые задачи: <b>{data['open_tasks']}</b>\n"
-        f"Новые заметки: <b>{data['notes']}</b>\n"
         f"Фокус: <b>{data['focus_minutes']} мин</b>",
         parse_mode="HTML",
     )
@@ -788,12 +620,11 @@ def build_review_text(data: dict, next_task) -> str:
     done = data["done_tasks"]
     created = data["created_tasks"]
     focus = data["focus_minutes"]
-    notes = data["notes"]
     avg_focus = round(focus / data["days"]) if data["days"] else 0
     completion = round(done / created * 100) if created else 0
 
     bars = build_week_bars(data["daily"])
-    insight = review_insight(done, created, focus, notes)
+    insight = review_insight(done, created, focus)
 
     lines = [
         "🧾 <b>Обзор недели</b>",
@@ -801,7 +632,6 @@ def build_review_text(data: dict, next_task) -> str:
         f"Задачи: <b>{done}</b> выполнено из <b>{created}</b> созданных",
         f"Выполнение: <b>{completion}%</b>",
         f"Фокус: <b>{focus} мин</b> · в среднем {avg_focus} мин/день",
-        f"Заметки: <b>{notes}</b>",
         "",
         f"<code>{bars}</code>",
         "",
@@ -833,15 +663,13 @@ def build_week_bars(daily: list[dict]) -> str:
     return " ".join(bars)
 
 
-def review_insight(done: int, created: int, focus: int, notes: int) -> str:
-    if done == 0 and focus == 0 and notes == 0:
+def review_insight(done: int, created: int, focus: int) -> str:
+    if done == 0 and focus == 0:
         return "неделя пока пустая. Начни с одной маленькой задачи или короткого фокуса."
     if focus >= 180 and done >= 5:
         return "хороший рабочий ритм. Сохраняй темп, но не забивай день задачами до краёв."
     if created > done * 2 and created >= 4:
         return "задач появляется больше, чем закрывается. Поможет матрица: оставь главное наверху."
-    if notes > done and focus < 60:
-        return "идей много, фокуса мало. Выбери одну заметку и преврати её в задачу."
     if focus < 45:
         return "добавь хотя бы одну короткую фокус-сессию. 15 минут уже достаточно."
     return "нормальная неделя. Следующий рост — меньше распыления и один главный шаг в день."
@@ -857,7 +685,7 @@ async def unknown_command(message: types.Message, state: FSMContext):
 async def free_text(message: types.Message, state: FSMContext):
     text = (message.text or message.caption or "").strip()
     if not text:
-        await message.answer("Пока сохраняю только текст. Отправь мысль или задачу сообщением — я положу её в инбокс.")
+        await message.answer("Пока сохраняю только текст. Отправь мысль или задачу сообщением — я положу её во входящие.")
         return
     if await handle_navigation_during_capture(message, state, text):
         return

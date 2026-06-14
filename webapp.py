@@ -10,17 +10,15 @@ from aiohttp import web
 from bot import bot
 from config import BOT_TOKEN, HOST, PORT
 from db import (
-    add_note,
     add_task,
     cancel_focus_session,
+    clear_task_matrix,
     complete_task,
-    delete_note,
     delete_task,
     finish_focus_session,
     get_active_focus_session,
     get_daily_summary,
     get_matrix_tasks,
-    get_recent_notes,
     start_focus_session,
     update_task_matrix,
 )
@@ -45,9 +43,6 @@ async def start_webapp() -> web.AppRunner:
     app.router.add_post("/matrix/api/tasks/{task_id}/matrix", api_update_matrix)
     app.router.add_post("/matrix/api/tasks/{task_id}/done", api_complete_task)
     app.router.add_delete("/matrix/api/tasks/{task_id}", api_delete_task)
-    app.router.add_get("/app/api/notes", api_notes)
-    app.router.add_post("/app/api/notes", api_create_note)
-    app.router.add_delete("/app/api/notes/{note_id}", api_delete_note)
     app.router.add_get("/app/api/summary", api_summary)
     app.router.add_get("/focus/api/session", api_focus_session)
     app.router.add_post("/focus/api/start", api_focus_start)
@@ -96,6 +91,12 @@ async def api_update_matrix(request: web.Request) -> web.Response:
     payload = await request.json()
     quadrant = payload.get("quadrant")
 
+    if quadrant == "inbox":
+        updated = await clear_task_matrix(user_id, task_id)
+        if not updated:
+            raise web.HTTPNotFound(text="Task not found")
+        return web.json_response({"ok": True})
+
     if quadrant not in QUADRANTS:
         raise web.HTTPBadRequest(text="Unknown quadrant")
 
@@ -141,43 +142,6 @@ async def api_delete_task(request: web.Request) -> web.Response:
     deleted = await delete_task(user_id, task_id)
     if not deleted:
         raise web.HTTPNotFound(text="Task not found")
-
-    return web.json_response({"ok": True})
-
-
-async def api_notes(request: web.Request) -> web.Response:
-    user_id = user_id_from_request(request)
-    notes = await get_recent_notes(user_id, limit=80)
-    return web.json_response({
-        "notes": [
-            {
-                "id": note.id,
-                "body": note.body,
-                "created_at": note.created_at,
-            }
-            for note in notes
-        ]
-    })
-
-
-async def api_create_note(request: web.Request) -> web.Response:
-    user_id = user_id_from_request(request)
-    payload = await request.json()
-    body = str(payload.get("body", "")).strip()
-
-    if len(body) < 2:
-        raise web.HTTPBadRequest(text="Note is too short")
-
-    note_id = await add_note(user_id, body[:1000])
-    return web.json_response({"ok": True, "id": note_id})
-
-
-async def api_delete_note(request: web.Request) -> web.Response:
-    user_id = user_id_from_request(request)
-    note_id = int(request.match_info["note_id"])
-    deleted = await delete_note(user_id, note_id)
-    if not deleted:
-        raise web.HTTPNotFound(text="Note not found")
 
     return web.json_response({"ok": True})
 
@@ -284,7 +248,6 @@ async def send_focus_report(user_id: int, method: str, duration: int, message_id
         "📊 <b>Итог дня</b>\n"
         f"Готовые задачи: <b>{summary['done_tasks']}</b>\n"
         f"Открытые задачи: <b>{summary['open_tasks']}</b>\n"
-        f"Заметки: <b>{summary['notes']}</b>\n"
         f"Фокус: <b>{summary['focus_minutes']} мин</b>\n\n"
         "Сделай короткую паузу и выбери следующий шаг."
     )
@@ -404,7 +367,7 @@ V5_APP_HTML = """
       text-decoration: none;
     }
     .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .composer, .panel, .cell, .notes-box {
+    .composer, .panel, .cell {
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -412,7 +375,7 @@ V5_APP_HTML = """
     }
     .composer { padding: 10px; margin-bottom: 12px; }
     .input-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-    input, textarea {
+    input {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -422,8 +385,7 @@ V5_APP_HTML = """
       font: inherit;
       outline: none;
     }
-    textarea { min-height: 90px; resize: vertical; }
-    input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
     .primary {
       border: 0;
       border-radius: 7px;
@@ -439,8 +401,6 @@ V5_APP_HTML = """
     .metric { border: 1px solid var(--line); background: rgba(255,255,255,.68); border-radius: 8px; padding: 9px; }
     .metric b { display: block; font-size: 21px; line-height: 1; }
     .metric span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .section { display: none; }
-    .section.active { display: block; }
     .split { display: grid; grid-template-columns: minmax(260px, .85fr) minmax(0, 1.4fr); gap: 12px; }
     .panel { padding: 12px; }
     .panel-title { font-weight: 900; font-size: 17px; margin-bottom: 4px; }
@@ -501,26 +461,10 @@ V5_APP_HTML = """
     .cell[data-q="plan"] { border-top: 5px solid var(--plan); }
     .cell[data-q="delegate"] { border-top: 5px solid var(--delegate); }
     .cell[data-q="drop"] { border-top: 5px solid var(--drop); }
-    .cell.drop-target { background: #f4fff6; border-color: rgba(31,122,90,.55); }
+    .cell.drop-target, .panel.drop-target { background: #f4fff6; border-color: rgba(31,122,90,.55); }
     .cell-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
     .cell-title { font-weight: 900; }
     .count { color: var(--muted); font-size: 13px; }
-    .note-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 10px 0 12px; align-items: start; }
-    .note {
-      border: 1px solid var(--line);
-      border-left: 4px solid var(--note);
-      border-radius: 7px;
-      background: #fff;
-      padding: 10px;
-      margin: 7px 0;
-      overflow-wrap: anywhere;
-    }
-    .note button { margin-top: 8px; }
-    .focus-card {
-      display: grid;
-      gap: 10px;
-      max-width: 620px;
-    }
     .focus-link {
       display: inline-block;
       text-align: center;
@@ -536,7 +480,7 @@ V5_APP_HTML = """
       .app { padding: 12px; }
       header { display: block; }
       h1 { font-size: 22px; }
-      .input-row, .note-form, .split { grid-template-columns: 1fr; }
+      .input-row, .split { grid-template-columns: 1fr; }
       .summary { grid-template-columns: repeat(4, minmax(68px, 1fr)); overflow-x: auto; }
       .matrix { grid-template-columns: repeat(2, minmax(145px, 1fr)); overflow-x: auto; }
       .cell { min-height: 170px; padding: 9px; }
@@ -549,73 +493,32 @@ V5_APP_HTML = """
     <header>
       <div>
         <h1>Memento Meta v5</h1>
-        <p class="hint">Быстрый инбокс, спокойный разбор, фокус без перегруза.</p>
+        <p class="hint">Входящие, матрица и задачи на одной странице.</p>
       </div>
     </header>
 
     <nav class="nav">
-      <button class="tab active" data-view="inbox">Инбокс</button>
-      <button class="tab" data-view="matrix">Матрица</button>
-      <button class="tab" data-view="notes">Заметки</button>
-      <button class="tab" data-view="today">Сегодня</button>
-      <button class="tab" data-view="focus">Фокус</button>
+      <button class="tab active" type="button">Матрица</button>
+      <a class="tab" href="/focus?v=5">Фокус</a>
     </nav>
 
     <section class="composer">
       <div class="input-row">
-        <input id="taskInput" maxlength="500" placeholder="Новая мысль или задача">
-        <button class="primary" id="addTask">В инбокс</button>
+        <input id="taskInput" maxlength="500" placeholder="Новая задача">
+        <button class="primary" id="addTask">Во входящие</button>
       </div>
     </section>
 
     <section class="summary" id="summary"></section>
 
-    <section class="section active" id="view-inbox">
-      <div class="split">
-        <section class="panel">
-          <div class="panel-title">Инбокс</div>
-          <div class="muted">Всё, что пришло из Telegram и ещё не разобрано.</div>
-          <div class="list" id="inboxList"></div>
-        </section>
-        <section class="panel">
-          <div class="panel-title">Быстрый разбор</div>
-          <div class="muted">Перетащи задачу в матрицу или нажми карточку и заверши/удали.</div>
-          <div class="matrix" id="inboxMatrix"></div>
-        </section>
-      </div>
-    </section>
-
-    <section class="section" id="view-matrix">
+    <section class="split">
+      <section class="panel" id="incomingPanel">
+        <div class="panel-title">Входящие</div>
+        <div class="muted">Всё, что пришло из Telegram и ещё не разобрано. Сюда можно вернуть задачу из матрицы.</div>
+        <div class="list" id="incomingList"></div>
+      </section>
+      <section>
       <section class="matrix" id="matrixGrid"></section>
-    </section>
-
-    <section class="section" id="view-notes">
-      <section class="notes-box panel">
-        <div class="panel-title">Заметки</div>
-        <div class="muted">Просто список. Без лишней системы.</div>
-        <div class="note-form">
-          <textarea id="noteInput" maxlength="1000" placeholder="Новая заметка"></textarea>
-          <button class="primary" id="addNote">Сохранить</button>
-        </div>
-        <div id="notesList"></div>
-      </section>
-    </section>
-
-    <section class="section" id="view-today">
-      <section class="panel">
-        <div class="panel-title">Сегодня</div>
-        <div class="muted">Открытые задачи, которые можно закрывать без лишнего разбора.</div>
-        <div class="list" id="todayList"></div>
-      </section>
-    </section>
-
-    <section class="section" id="view-focus">
-      <section class="panel focus-card">
-        <div>
-          <div class="panel-title">Фокус</div>
-          <div class="muted">Таймер вынесен отдельно, чтобы экран концентрации был чистым.</div>
-        </div>
-        <a class="focus-link" href="/focus?v=5">Открыть фокус-таймер</a>
       </section>
     </section>
   </main>
@@ -630,13 +533,12 @@ V5_APP_HTML = """
       plan: ["План", "важно, не срочно"],
       delegate: ["Делегировать", "срочно, не важно"],
       drop: ["Убрать", "не важно и не срочно"],
-      inbox: ["Инбокс", "нужно разобрать"]
+      inbox: ["Входящие", "нужно разобрать"]
     };
     const order = ["do", "plan", "delegate", "drop"];
+    const dropOrder = ["inbox", ...order];
     let tasks = [];
-    let notes = [];
     let selected = null;
-    let view = "inbox";
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -667,7 +569,7 @@ V5_APP_HTML = """
 
       const meta = document.createElement("span");
       meta.className = "task-meta";
-      meta.textContent = quadrant(task) === "inbox" ? "из инбокса" : labels[quadrant(task)][1];
+      meta.textContent = quadrant(task) === "inbox" ? "из входящих" : labels[quadrant(task)][1];
 
       const actions = document.createElement("div");
       actions.className = "task-actions";
@@ -748,60 +650,29 @@ V5_APP_HTML = """
       const open = tasks.length;
       const matrixed = tasks.filter(task => quadrant(task) !== "inbox").length;
       document.getElementById("summary").innerHTML = [
-        ["Инбокс", inbox],
+        ["Входящие", inbox],
         ["Открыто", open],
         ["В матрице", matrixed],
         ["Фокус", `${summary.focus_minutes || 0}м`],
       ].map(([label, value]) => `<div class="metric"><b>${value}</b><span>${label}</span></div>`).join("");
     }
 
-    function renderNotes() {
-      const list = document.getElementById("notesList");
-      list.innerHTML = "";
-      if (!notes.length) {
-        list.innerHTML = `<div class="empty">Заметок пока нет</div>`;
-        return;
-      }
-      notes.forEach(note => {
-        const item = document.createElement("article");
-        item.className = "note";
-        item.textContent = note.body;
-        const button = document.createElement("button");
-        button.className = "action delete";
-        button.type = "button";
-        button.textContent = "Удалить";
-        button.onclick = () => deleteNote(note);
-        item.appendChild(button);
-        list.appendChild(item);
-      });
-    }
-
     function render() {
-      document.querySelectorAll(".tab").forEach(tab => tab.classList.toggle("active", tab.dataset.view === view));
-      document.querySelectorAll(".section").forEach(section => section.classList.toggle("active", section.id === `view-${view}`));
-
       const inboxItems = tasks.filter(task => quadrant(task) === "inbox");
-      renderTasks(document.getElementById("inboxList"), inboxItems, "Инбокс пуст");
-      renderTasks(document.getElementById("todayList"), tasks, "Открытых задач нет");
-
-      const inboxMatrix = document.getElementById("inboxMatrix");
-      inboxMatrix.innerHTML = "";
-      order.forEach(q => inboxMatrix.appendChild(matrixCell(q, tasks)));
+      renderTasks(document.getElementById("incomingList"), inboxItems, "Входящие пустые");
 
       const matrixGrid = document.getElementById("matrixGrid");
       matrixGrid.innerHTML = "";
       order.forEach(q => matrixGrid.appendChild(matrixCell(q, tasks)));
-      renderNotes();
+      setupIncomingDrop();
     }
 
     async function load() {
-      const [taskData, noteData, summary] = await Promise.all([
+      const [taskData, summary] = await Promise.all([
         api("/matrix/api/tasks"),
-        api("/app/api/notes"),
         api("/app/api/summary")
       ]);
       tasks = taskData.tasks;
-      notes = noteData.notes;
       renderSummary(summary);
       render();
     }
@@ -840,26 +711,6 @@ V5_APP_HTML = """
       render();
     }
 
-    async function createNote() {
-      const input = document.getElementById("noteInput");
-      const body = input.value.trim();
-      if (body.length < 2) {
-        input.focus();
-        return;
-      }
-      await api("/app/api/notes", { method: "POST", body: JSON.stringify({ body }) });
-      input.value = "";
-      const data = await api("/app/api/notes");
-      notes = data.notes;
-      renderNotes();
-    }
-
-    async function deleteNote(note) {
-      await api(`/app/api/notes/${note.id}`, { method: "DELETE" });
-      notes = notes.filter(item => item.id !== note.id);
-      renderNotes();
-    }
-
     function clearTargets() {
       document.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
       document.querySelectorAll(".dragging").forEach(item => item.classList.remove("dragging"));
@@ -867,8 +718,26 @@ V5_APP_HTML = """
 
     function dropTargetAt(x, y) {
       const element = document.elementFromPoint(x, y);
-      const cell = element?.closest?.(".cell");
-      return order.includes(cell?.dataset?.q) ? cell : null;
+      const target = element?.closest?.(".cell, #incomingPanel");
+      return dropOrder.includes(target?.dataset?.q) ? target : null;
+    }
+
+    function setupIncomingDrop() {
+      const panel = document.getElementById("incomingPanel");
+      panel.dataset.q = "inbox";
+      panel.ondragover = event => {
+        event.preventDefault();
+        panel.classList.add("drop-target");
+      };
+      panel.ondragleave = event => {
+        if (!panel.contains(event.relatedTarget)) panel.classList.remove("drop-target");
+      };
+      panel.ondrop = async event => {
+        event.preventDefault();
+        clearTargets();
+        const task = tasks.find(item => item.id === Number(event.dataTransfer.getData("text/plain")));
+        if (task) await moveTask(task, "inbox");
+      };
     }
 
     function startPointerDrag(event, task, card) {
@@ -932,13 +801,6 @@ V5_APP_HTML = """
       window.addEventListener("pointercancel", cancel);
     }
 
-    document.querySelectorAll(".tab").forEach(tab => {
-      tab.onclick = () => {
-        view = tab.dataset.view;
-        selected = null;
-        render();
-      };
-    });
     document.getElementById("addTask").onclick = createTask;
     document.getElementById("taskInput").addEventListener("keydown", event => {
       if (event.key === "Enter") {
@@ -946,714 +808,9 @@ V5_APP_HTML = """
         createTask();
       }
     });
-    document.getElementById("addNote").onclick = createNote;
     load().catch(() => {
       document.querySelector(".app").innerHTML = "<section class='panel'><b>Открой панель из Telegram</b><p class='hint'>Так Web App получает доступ к твоим данным.</p></section>";
     });
-  </script>
-</body>
-</html>
-"""
-
-
-MATRIX_HTML = """
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Memento Meta · Matrix</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <style>
-    :root {
-      --bg: #f6f1e8;
-      --ink: #171717;
-      --muted: #6f6a60;
-      --line: #ddd2c2;
-      --card: #fffdf8;
-      --surface: #fff9ef;
-      --urgent: #f1a37f;
-      --plan: #80bf9b;
-      --delegate: #8daee8;
-      --drop: #c9bfae;
-      --accent: #1f7a5a;
-      --danger: #d87864;
-      --shadow: 0 10px 30px rgba(42, 33, 20, .08);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        linear-gradient(180deg, #fffaf1 0%, var(--bg) 42%, #efe8dc 100%);
-      color: var(--ink);
-      font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    .app { padding: 18px; max-width: 1120px; margin: 0 auto; }
-    .nav { display: flex; gap: 8px; margin-bottom: 14px; }
-    .nav a {
-      text-decoration: none;
-      color: var(--ink);
-      background: rgba(255,255,255,.72);
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 8px 11px;
-      font-weight: 750;
-      font-size: 14px;
-    }
-    .nav a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-    header { display: flex; justify-content: space-between; gap: 14px; align-items: flex-end; margin-bottom: 14px; }
-    h1 { margin: 0; font-size: 27px; letter-spacing: 0; }
-    .hint { color: var(--muted); margin: 4px 0 0; }
-    .composer {
-      background: rgba(255, 253, 248, .9);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 12px;
-      box-shadow: var(--shadow);
-    }
-    .input-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-    .task-input {
-      width: 100%;
-      min-height: 44px;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #fff;
-      color: var(--ink);
-      padding: 11px 12px;
-      font: inherit;
-      outline: none;
-    }
-    .task-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.12); }
-    .add-button {
-      border: 0;
-      border-radius: 7px;
-      padding: 0 16px;
-      background: var(--accent);
-      color: #fff;
-      font: inherit;
-      font-weight: 800;
-      cursor: pointer;
-      min-width: 126px;
-    }
-    .chips { display: flex; gap: 6px; overflow-x: auto; padding-top: 8px; }
-    .chip {
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #fff;
-      color: var(--ink);
-      padding: 7px 10px;
-      font: inherit;
-      white-space: nowrap;
-      cursor: pointer;
-    }
-    .chip.active { border-color: var(--accent); background: #eef7f1; color: #14583f; font-weight: 750; }
-    .filter-row { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
-    .toolbar {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .summary-item {
-      background: rgba(255, 253, 248, .78);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 9px 10px;
-    }
-    .summary-value { display: block; font-size: 20px; font-weight: 850; line-height: 1; }
-    .summary-label { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .matrix-shell {
-      position: relative;
-      padding: 0 0 0 28px;
-    }
-    .axis {
-      position: absolute;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 750;
-      text-transform: uppercase;
-      letter-spacing: .04em;
-    }
-    .axis-left { left: 0; top: 50%; transform: translateY(-50%) rotate(-90deg); transform-origin: center; }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      align-items: stretch;
-    }
-    .grid.focused { grid-template-columns: minmax(0, 1fr); }
-    .cell {
-      min-height: 255px;
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      box-shadow: var(--shadow);
-      display: flex;
-      flex-direction: column;
-    }
-    .cell.target {
-      background: #fbfff9;
-      border-color: rgba(31,122,90,.45);
-      box-shadow: 0 0 0 2px rgba(31,122,90,.12), var(--shadow);
-    }
-    .cell.drop-target {
-      background: #f7fff3;
-      border-color: rgba(31,122,90,.62);
-      box-shadow: 0 0 0 3px rgba(31,122,90,.16), var(--shadow);
-    }
-    .cell[data-q="do"] { border-top: 5px solid var(--urgent); }
-    .cell[data-q="plan"] { border-top: 5px solid var(--plan); }
-    .cell[data-q="delegate"] { border-top: 5px solid var(--delegate); }
-    .cell[data-q="drop"] { border-top: 5px solid var(--drop); }
-    .cell-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; margin-bottom: 8px; }
-    .cell-title { font-weight: 850; font-size: 16px; }
-    .count { color: var(--muted); font-size: 13px; }
-    .cell-tools { display: flex; align-items: center; gap: 6px; }
-    .cell-add {
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      border: 1px solid var(--line);
-      background: #fff;
-      color: var(--ink);
-      font: inherit;
-      font-weight: 850;
-      cursor: pointer;
-    }
-    .count-pill {
-      min-width: 28px;
-      height: 28px;
-      display: inline-grid;
-      place-items: center;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--muted);
-      background: rgba(255,255,255,.72);
-      font-size: 13px;
-      font-weight: 800;
-    }
-    .task {
-      width: 100%;
-      display: block;
-      border: 1px solid var(--line);
-      border-left: 4px solid transparent;
-      background: #fff;
-      color: var(--ink);
-      border-radius: 7px;
-      padding: 10px 10px;
-      margin: 7px 0;
-      text-align: left;
-      font: inherit;
-      cursor: pointer;
-      box-shadow: 0 2px 8px rgba(23,23,23,.04);
-      touch-action: none;
-      user-select: none;
-      -webkit-user-drag: element;
-    }
-    .task-title { display: block; font-weight: 750; overflow-wrap: anywhere; }
-    .task-meta { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
-    .task[data-q="do"] { border-left-color: var(--urgent); }
-    .task[data-q="plan"] { border-left-color: var(--plan); }
-    .task[data-q="delegate"] { border-left-color: var(--delegate); }
-    .task[data-q="drop"] { border-left-color: var(--drop); }
-    .task[data-q="inbox"] { border-left-color: var(--line); }
-    .task:hover { border-color: #bba98f; }
-    .task:active { transform: translateY(1px); }
-    .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.16); }
-    .task.dragging {
-      opacity: .35;
-      transform: scale(.99);
-    }
-    .task-ghost {
-      position: fixed;
-      z-index: 50;
-      width: min(280px, calc(100vw - 34px));
-      pointer-events: none;
-      transform: translate(-50%, -50%) rotate(-1deg);
-      box-shadow: 0 16px 34px rgba(23,23,23,.16);
-    }
-    .task-actions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 7px;
-      margin-top: 9px;
-    }
-    .task:not(.selected) .task-actions { display: none; }
-    .task-action {
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      padding: 8px 9px;
-      font: inherit;
-      font-size: 13px;
-      font-weight: 800;
-      cursor: pointer;
-      touch-action: manipulation;
-    }
-    .task-action.done {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .task-action.delete {
-      background: #fff;
-      color: var(--danger);
-      border-color: rgba(216,120,100,.45);
-    }
-    .inbox {
-      margin-top: 14px;
-      border: 1px dashed var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: rgba(255,255,255,.58);
-    }
-    .empty { color: var(--muted); padding: 10px 0; }
-    @media (min-width: 900px) {
-      .app { padding: 22px; }
-      .matrix-shell { padding-left: 32px; }
-      .cell { min-height: 285px; }
-      .task { padding: 11px 12px; }
-    }
-    @media (max-width: 640px) {
-      .app { padding: 14px; }
-      header { display: block; }
-      h1 { font-size: 22px; }
-      .input-row { grid-template-columns: 1fr; }
-      .add-button { min-height: 42px; }
-      .filter-row,
-      .chips { scrollbar-width: none; }
-      .filter-row::-webkit-scrollbar,
-      .chips::-webkit-scrollbar { display: none; }
-      .toolbar {
-        grid-template-columns: repeat(5, minmax(62px, 1fr));
-        overflow-x: auto;
-        padding-bottom: 2px;
-      }
-      .summary-item { min-width: 68px; padding: 8px; }
-      .summary-value { font-size: 18px; }
-      .matrix-shell { padding-left: 0; overflow-x: auto; padding-bottom: 2px; }
-      .axis-left { display: none; }
-      .grid { grid-template-columns: repeat(2, minmax(142px, 1fr)); gap: 8px; min-width: 292px; }
-      .grid.focused { grid-template-columns: minmax(0, 1fr); min-width: 0; }
-      .cell { min-height: 168px; padding: 9px; }
-      .cell-head { gap: 6px; margin-bottom: 6px; }
-      .cell-title { font-size: 14px; }
-      .count { font-size: 12px; }
-      .cell-add { width: 28px; height: 28px; }
-      .count-pill { min-width: 26px; height: 26px; }
-      .task { font-size: 14px; padding: 8px; margin: 6px 0; }
-      .task-meta { font-size: 11px; }
-      .task-action { padding: 8px 7px; font-size: 12px; }
-    }
-  </style>
-</head>
-<body>
-  <main class="app">
-    <nav class="nav">
-      <a class="active" href="/matrix?v=5">Матрица</a>
-      <a href="/focus?v=5">Фокус</a>
-    </nav>
-
-    <header>
-      <div>
-        <h1>Матрица</h1>
-        <p class="hint">Пиши задачи здесь. Потом раскидывай по важности и срочности.</p>
-      </div>
-    </header>
-
-    <section class="composer">
-      <div class="input-row">
-        <input class="task-input" id="taskInput" maxlength="500" placeholder="Новая задача">
-        <button class="add-button" id="addTask">Добавить</button>
-      </div>
-      <div class="chips" id="quadrantChips">
-        <button class="chip active" data-q="inbox">Входящие</button>
-        <button class="chip" data-q="do">Сделать</button>
-        <button class="chip" data-q="plan">План</button>
-        <button class="chip" data-q="delegate">Делегировать</button>
-        <button class="chip" data-q="drop">Убрать</button>
-      </div>
-    </section>
-
-    <section class="filter-row" id="viewFilters">
-      <button class="chip active" data-filter="all">Все</button>
-      <button class="chip" data-filter="inbox">Входящие</button>
-      <button class="chip" data-filter="do">Сделать</button>
-      <button class="chip" data-filter="plan">План</button>
-      <button class="chip" data-filter="delegate">Делегировать</button>
-      <button class="chip" data-filter="drop">Убрать</button>
-    </section>
-
-    <section class="toolbar" id="summary"></section>
-    <section class="matrix-shell">
-      <div class="axis axis-left">Важно</div>
-      <section class="grid" id="grid"></section>
-    </section>
-    <section class="inbox" id="inbox"></section>
-  </main>
-
-  <script>
-    const tg = window.Telegram?.WebApp;
-    tg?.ready();
-    tg?.expand();
-
-    const labels = {
-      do: ["Сделать", "важно и срочно"],
-      plan: ["Запланировать", "важно, не срочно"],
-      delegate: ["Делегировать", "срочно, не важно"],
-      drop: ["Убрать", "не важно и не срочно"],
-      inbox: ["Без квадранта", "нужно разобрать"]
-    };
-    const order = ["do", "plan", "delegate", "drop"];
-    let tasks = [];
-    let selected = null;
-    let newTaskQuadrant = "inbox";
-    let viewFilter = "all";
-
-    async function api(path, options = {}) {
-      const response = await fetch(path, {
-        ...options,
-        headers: {
-          "Content-Type": "application/json",
-          "X-Telegram-Init-Data": tg?.initData || "",
-          ...(options.headers || {})
-        }
-      });
-      if (!response.ok) throw new Error(await response.text());
-      return response.json();
-    }
-
-    function taskButton(task) {
-      const card = document.createElement("article");
-      card.className = "task" + (selected?.id === task.id ? " selected" : "");
-      card.dataset.q = task.quadrant;
-      card.dataset.id = task.id;
-      card.draggable = true;
-
-      const title = document.createElement("span");
-      title.className = "task-title";
-      title.textContent = task.title;
-
-      const meta = document.createElement("span");
-      meta.className = "task-meta";
-      meta.textContent = task.quadrant === "inbox" ? labels.inbox[1] : "Перетащи в нужный квадрат";
-
-      const actions = document.createElement("div");
-      actions.className = "task-actions";
-
-      const done = document.createElement("button");
-      done.type = "button";
-      done.className = "task-action done";
-      done.draggable = false;
-      done.textContent = "Готово";
-      done.onpointerdown = event => event.stopPropagation();
-      done.onclick = event => {
-        event.stopPropagation();
-        completeTaskCard(task);
-      };
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "task-action delete";
-      remove.draggable = false;
-      remove.textContent = "Удалить";
-      remove.onpointerdown = event => event.stopPropagation();
-      remove.onclick = event => {
-        event.stopPropagation();
-        deleteTaskCard(task);
-      };
-
-      actions.append(done, remove);
-      card.append(title, meta, actions);
-      card.addEventListener("dragstart", event => {
-        if (event.target.closest(".task-action")) {
-          event.preventDefault();
-          return;
-        }
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", String(task.id));
-        card.classList.add("dragging");
-      });
-      card.addEventListener("dragend", () => {
-        card.classList.remove("dragging");
-        clearDropTargets();
-      });
-      card.addEventListener("pointerdown", event => startTaskDrag(event, task, card));
-      return card;
-    }
-
-    function selectTask(task) {
-      selected = task;
-      render();
-    }
-
-    function resetSelection() {
-      selected = null;
-    }
-
-    function setNewTaskQuadrant(quadrant) {
-      newTaskQuadrant = quadrant;
-      document.querySelectorAll("#quadrantChips .chip").forEach(item => {
-        item.classList.toggle("active", item.dataset.q === quadrant);
-      });
-      document.getElementById("addTask").textContent = quadrant === "inbox" ? "Добавить" : labels[quadrant][0];
-      render();
-      document.getElementById("taskInput").focus();
-    }
-
-    function renderCell(quadrant) {
-      const items = visibleTasks().filter(task => task.quadrant === quadrant);
-      const cell = document.createElement("section");
-      cell.className = "cell" + (newTaskQuadrant === quadrant ? " target" : "");
-      cell.dataset.q = quadrant;
-      cell.innerHTML = `
-        <div class="cell-head">
-          <div>
-            <div class="cell-title">${labels[quadrant][0]}</div>
-            <div class="count">${labels[quadrant][1]}</div>
-          </div>
-          <div class="cell-tools">
-            <span class="count-pill">${items.length}</span>
-            <button class="cell-add" type="button" aria-label="Добавить">+</button>
-          </div>
-        </div>
-      `;
-      cell.querySelector(".cell-add").onclick = event => {
-        event.stopPropagation();
-        setNewTaskQuadrant(quadrant);
-      };
-      cell.addEventListener("dragover", event => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-        cell.classList.add("drop-target");
-      });
-      cell.addEventListener("dragleave", event => {
-        if (!cell.contains(event.relatedTarget)) cell.classList.remove("drop-target");
-      });
-      cell.addEventListener("drop", async event => {
-        event.preventDefault();
-        clearDropTargets();
-        const taskId = Number(event.dataTransfer.getData("text/plain"));
-        const task = tasks.find(item => item.id === taskId);
-        if (!task) return;
-        try {
-          await moveTaskToQuadrant(task, quadrant);
-        } catch (_error) {
-          await load();
-        }
-      });
-      if (!items.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "Пусто";
-        cell.appendChild(empty);
-      }
-      items.forEach(task => cell.appendChild(taskButton(task)));
-      return cell;
-    }
-
-    function visibleTasks() {
-      return tasks.filter(task => {
-        return viewFilter === "all" || task.quadrant === viewFilter;
-      });
-    }
-
-    function render() {
-      const grid = document.getElementById("grid");
-      grid.innerHTML = "";
-      grid.closest(".matrix-shell").hidden = viewFilter === "inbox";
-      const visibleOrder = viewFilter === "all" || viewFilter === "inbox" ? order : [viewFilter];
-      grid.classList.toggle("focused", visibleOrder.length === 1);
-      visibleOrder.forEach(quadrant => grid.appendChild(renderCell(quadrant)));
-
-      const summary = document.getElementById("summary");
-      const values = [
-        ["Всего", tasks.length],
-        [labels.do[0], tasks.filter(task => task.quadrant === "do").length],
-        [labels.plan[0], tasks.filter(task => task.quadrant === "plan").length],
-        [labels.delegate[0], tasks.filter(task => task.quadrant === "delegate").length],
-        ["Без кв.", tasks.filter(task => task.quadrant === "inbox").length],
-      ];
-      summary.innerHTML = values.map(([label, value]) => `
-        <div class="summary-item">
-          <span class="summary-value">${value}</span>
-          <span class="summary-label">${label}</span>
-        </div>
-      `).join("");
-
-      const inboxItems = visibleTasks().filter(task => task.quadrant === "inbox");
-      const inbox = document.getElementById("inbox");
-      inbox.hidden = viewFilter !== "all" && viewFilter !== "inbox";
-      inbox.innerHTML = `<div class="cell-head"><div><div class="cell-title">Без квадранта</div><div class="count">разбери позже или сейчас</div></div><div class="count">${inboxItems.length}</div></div>`;
-      if (!inboxItems.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "Все задачи разнесены";
-        inbox.appendChild(empty);
-      }
-      inboxItems.forEach(task => inbox.appendChild(taskButton(task)));
-
-    }
-
-    async function load() {
-      try {
-        const data = await api("/matrix/api/tasks");
-        tasks = data.tasks;
-        render();
-      } catch (error) {
-        document.getElementById("grid").innerHTML = `<section class="cell"><b>Не удалось открыть матрицу</b><p class="hint">Открой страницу из Telegram-кнопки Web App.</p></section>`;
-      }
-    }
-
-    async function createTask() {
-      const input = document.getElementById("taskInput");
-      const title = input.value.trim();
-      if (title.length < 2) {
-        input.focus();
-        return;
-      }
-
-      await api("/matrix/api/tasks", {
-        method: "POST",
-        body: JSON.stringify({
-          title,
-          quadrant: newTaskQuadrant === "inbox" ? null : newTaskQuadrant
-        })
-      });
-
-      input.value = "";
-      resetSelection();
-      await load();
-    }
-
-    async function moveTaskToQuadrant(task, quadrant) {
-      if (!task || !order.includes(quadrant) || task.quadrant === quadrant) return;
-      await api(`/matrix/api/tasks/${task.id}/matrix`, {
-        method: "POST",
-        body: JSON.stringify({ quadrant })
-      });
-      task.quadrant = quadrant;
-      selected = null;
-      render();
-    }
-
-    async function completeTaskCard(task) {
-      await api(`/matrix/api/tasks/${task.id}/done`, { method: "POST" });
-      tasks = tasks.filter(item => item.id !== task.id);
-      if (selected?.id === task.id) resetSelection();
-      render();
-    }
-
-    async function deleteTaskCard(task) {
-      await api(`/matrix/api/tasks/${task.id}`, { method: "DELETE" });
-      tasks = tasks.filter(item => item.id !== task.id);
-      if (selected?.id === task.id) resetSelection();
-      render();
-    }
-
-    function clearDropTargets() {
-      document.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
-    }
-
-    function dropTargetAt(x, y) {
-      const element = document.elementFromPoint(x, y);
-      const cell = element?.closest?.(".cell");
-      const quadrant = cell?.dataset?.q;
-      return order.includes(quadrant) ? cell : null;
-    }
-
-    function startTaskDrag(event, task, card) {
-      if (event.button !== undefined && event.button !== 0) return;
-      if (event.target.closest(".task-action")) return;
-
-      const startX = event.clientX;
-      const startY = event.clientY;
-      let dragging = false;
-      let ghost = null;
-
-      const move = moveEvent => {
-        const dx = moveEvent.clientX - startX;
-        const dy = moveEvent.clientY - startY;
-        if (!dragging && Math.hypot(dx, dy) < 8) return;
-        moveEvent.preventDefault();
-
-        if (!dragging) {
-          dragging = true;
-          card.classList.add("dragging");
-          ghost = card.cloneNode(true);
-          ghost.classList.add("task-ghost");
-          ghost.querySelectorAll("button").forEach(button => button.remove());
-          document.body.appendChild(ghost);
-        }
-
-        ghost.style.left = `${moveEvent.clientX}px`;
-        ghost.style.top = `${moveEvent.clientY}px`;
-        clearDropTargets();
-        dropTargetAt(moveEvent.clientX, moveEvent.clientY)?.classList.add("drop-target");
-      };
-
-      const end = async endEvent => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", end);
-        window.removeEventListener("pointercancel", cancel);
-        card.classList.remove("dragging");
-        ghost?.remove();
-
-        const target = dropTargetAt(endEvent.clientX, endEvent.clientY);
-        clearDropTargets();
-        if (dragging && target) {
-          try {
-            await moveTaskToQuadrant(task, target.dataset.q);
-            tg?.HapticFeedback?.impactOccurred?.("light");
-          } catch (_error) {
-            await load();
-          }
-        } else if (!dragging) {
-          selectTask(selected?.id === task.id ? null : task);
-        }
-      };
-
-      const cancel = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", end);
-        window.removeEventListener("pointercancel", cancel);
-        card.classList.remove("dragging");
-        ghost?.remove();
-        clearDropTargets();
-      };
-
-      window.addEventListener("pointermove", move, { passive: false });
-      window.addEventListener("pointerup", end);
-      window.addEventListener("pointercancel", cancel);
-    }
-
-    document.getElementById("addTask").onclick = createTask;
-    document.getElementById("taskInput").addEventListener("keydown", event => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        createTask();
-      }
-    });
-
-    document.querySelectorAll(".chip").forEach(button => {
-      button.onclick = () => {
-        if (!button.dataset.q) return;
-        setNewTaskQuadrant(button.dataset.q);
-      };
-    });
-
-    document.querySelectorAll("#viewFilters .chip").forEach(button => {
-      button.onclick = () => {
-        viewFilter = button.dataset.filter;
-        document.querySelectorAll("#viewFilters .chip").forEach(item => item.classList.remove("active"));
-        button.classList.add("active");
-        render();
-      };
-    });
-
-    load();
   </script>
 </body>
 </html>
