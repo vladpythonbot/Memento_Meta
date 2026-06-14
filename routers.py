@@ -87,14 +87,14 @@ async def save_quick_tasks(message: types.Message, state: FSMContext, text: str)
 
     if len(task_ids) == 1:
         await message.answer(
-            f"Закрепил в задачах:\n\n<b>{escape(items[0])}</b>",
+            f"Добавил в инбокс:\n\n<b>{escape(items[0])}</b>",
             parse_mode="HTML",
             reply_markup=task_actions_keyboard(task_ids[0]),
         )
         return
 
     await message.answer(
-        f"Закрепил задач: <b>{len(task_ids)}</b>\n\nОни уже в панели и матрице.",
+        f"Добавил в инбокс: <b>{len(task_ids)}</b>\n\nРазберёшь их в панели.",
         parse_mode="HTML",
         reply_markup=app_links_keyboard(WEBAPP_URL or None),
     )
@@ -113,7 +113,7 @@ async def start(message: types.Message, state: FSMContext):
     await message.answer(
         f"Привет, {escape(name)}.\n\n"
         "Я Noto Memento.\n\n"
-        "Пиши сюда задачу или список задач — я сразу закреплю их. Для панели и фокуса нажми кнопку ниже.",
+        "Пиши сюда мысль, задачу или список — я сложу в инбокс. Разбор, матрица и фокус живут в панели.",
         reply_markup=main_keyboard,
     )
 
@@ -133,10 +133,9 @@ async def app_home(message: types.Message):
 async def help_command(message: types.Message):
     await message.answer(
         "Коротко:\n\n"
-        "Просто отправь текст — я сразу закреплю задачу.\n"
-        "Несколько строк — несколько задач.\n"
-        "🧭 Панель — задачи, матрица и фокус в Web App.\n"
-        "📝 Записать — быстрый ввод задачи.\n"
+        "Просто отправь текст — я положу его в инбокс.\n"
+        "Несколько строк — несколько пунктов.\n"
+        "🧭 Панель — инбокс, матрица, заметки и фокус.\n"
         "/note текст — сохранить как заметку."
     )
 
@@ -148,7 +147,7 @@ async def settings(message: types.Message):
         "Язык: русский\n"
         "Фокус-методы: Pomodoro, Short Focus, Deep Work\n"
         "Методы планирования: матрица Эйзенхауэра\n"
-        "Свободный текст: сразу закрепляется как задача"
+        "Свободный текст: сразу попадает в инбокс"
     )
 
 
@@ -192,8 +191,8 @@ async def matrix(message: types.Message):
 async def capture_start(message: types.Message, state: FSMContext):
     await state.set_state(CaptureState.wait_text)
     await message.answer(
-        "Напиши задачу одним сообщением.\n\n"
-        "Если задач несколько — отправь списком, каждая с новой строки."
+        "Напиши мысль или задачу одним сообщением.\n\n"
+        "Если пунктов несколько — отправь списком, каждый с новой строки."
     )
 
 
@@ -858,7 +857,7 @@ async def unknown_command(message: types.Message, state: FSMContext):
 async def free_text(message: types.Message, state: FSMContext):
     text = (message.text or message.caption or "").strip()
     if not text:
-        await message.answer("Пока сохраняю только текст. Отправь задачу сообщением — я закреплю её.")
+        await message.answer("Пока сохраняю только текст. Отправь мысль или задачу сообщением — я положу её в инбокс.")
         return
     if await handle_navigation_during_capture(message, state, text):
         return
