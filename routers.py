@@ -74,6 +74,32 @@ def split_capture_items(text: str) -> list[str]:
     return [item for item in items if len(item) >= 2]
 
 
+async def save_quick_tasks(message: types.Message, state: FSMContext, text: str):
+    if len(text) < 2:
+        await message.answer("Слишком коротко. Напиши чуть подробнее.")
+        return
+
+    await ensure_user(message.from_user.id, message.from_user.first_name)
+    await state.clear()
+
+    items = split_capture_items(text) or [text]
+    task_ids = [await add_task(message.from_user.id, item[:500]) for item in items]
+
+    if len(task_ids) == 1:
+        await message.answer(
+            f"Закрепил в задачах:\n\n<b>{escape(items[0])}</b>",
+            parse_mode="HTML",
+            reply_markup=task_actions_keyboard(task_ids[0]),
+        )
+        return
+
+    await message.answer(
+        f"Закрепил задач: <b>{len(task_ids)}</b>\n\nОни уже в панели и матрице.",
+        parse_mode="HTML",
+        reply_markup=app_links_keyboard(WEBAPP_URL or None),
+    )
+
+
 class CaptureState(StatesGroup):
     wait_text = State()
 
@@ -87,7 +113,7 @@ async def start(message: types.Message, state: FSMContext):
     await message.answer(
         f"Привет, {escape(name)}.\n\n"
         "Я Noto Memento.\n\n"
-        "Пиши сюда мысли — я сохраню. Для задач и фокуса открывай панель.",
+        "Пиши сюда задачу или список задач — я сразу закреплю их. Для панели и фокуса нажми кнопку ниже.",
         reply_markup=main_keyboard,
     )
 
@@ -107,9 +133,11 @@ async def app_home(message: types.Message):
 async def help_command(message: types.Message):
     await message.answer(
         "Коротко:\n\n"
+        "Просто отправь текст — я сразу закреплю задачу.\n"
+        "Несколько строк — несколько задач.\n"
         "🧭 Панель — задачи, матрица и фокус в Web App.\n"
-        "📝 Записать — сохранить мысль или задачу.\n\n"
-        "Просто отправь текст — я покажу выбор: заметка или задача."
+        "📝 Записать — быстрый ввод задачи.\n"
+        "/note текст — сохранить как заметку."
     )
 
 
@@ -120,7 +148,7 @@ async def settings(message: types.Message):
         "Язык: русский\n"
         "Фокус-методы: Pomodoro, Short Focus, Deep Work\n"
         "Методы планирования: матрица Эйзенхауэра\n"
-        "Свободный текст: сначала становится черновиком, потом выбираешь заметку или задачу"
+        "Свободный текст: сразу закрепляется как задача"
     )
 
 
@@ -164,8 +192,8 @@ async def matrix(message: types.Message):
 async def capture_start(message: types.Message, state: FSMContext):
     await state.set_state(CaptureState.wait_text)
     await message.answer(
-        "Напиши текст одним сообщением.\n\n"
-        "Можно одной строкой или списком: каждая задача с новой строки. После отправки выберешь, что с этим сделать."
+        "Напиши задачу одним сообщением.\n\n"
+        "Если задач несколько — отправь списком, каждая с новой строки."
     )
 
 
@@ -242,7 +270,7 @@ async def capture_text(message: types.Message, state: FSMContext):
     if await handle_navigation_during_capture(message, state, text):
         return
 
-    await ask_capture_type(message, state, text)
+    await save_quick_tasks(message, state, text)
 
 
 async def ask_capture_type(message: types.Message, state: FSMContext, text: str):
@@ -830,7 +858,7 @@ async def unknown_command(message: types.Message, state: FSMContext):
 async def free_text(message: types.Message, state: FSMContext):
     text = (message.text or message.caption or "").strip()
     if not text:
-        await message.answer("Пока сохраняю только текст. Отправь мысль сообщением — я положу её в сохранённое.")
+        await message.answer("Пока сохраняю только текст. Отправь задачу сообщением — я закреплю её.")
         return
     if await handle_navigation_during_capture(message, state, text):
         return
@@ -838,4 +866,4 @@ async def free_text(message: types.Message, state: FSMContext):
         await message.answer("Не знаю такую команду. Нажми /help, чтобы посмотреть доступные.")
         return
 
-    await ask_capture_type(message, state, text)
+    await save_quick_tasks(message, state, text)
