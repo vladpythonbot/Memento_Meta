@@ -45,7 +45,7 @@ The panel runs at `/app` and `/matrix`.
 Set this variable in Railway:
 
 ```bash
-WEBAPP_URL=https://your-railway-domain.up.railway.app
+WEBAPP_URL=https://mementometa-production.up.railway.app
 ```
 
 The bot process also starts an HTTP server on `PORT`, so Railway should run it as a `web` process.
