@@ -22,7 +22,7 @@ Telegram username: `memento_meta_bot`
 
 - Free-text task capture in Telegram.
 - Multi-line messages become multiple tasks.
-- Persistent one-button bot panel.
+- Persistent one-button Mini App panel.
 - Telegram Web App task workspace.
 - Inbox area for unsorted tasks.
 - Eisenhower 2x2 matrix.
@@ -36,7 +36,7 @@ Telegram username: `memento_meta_bot`
 
 - `🧭 Панель`
 
-Everything else is intentionally handled by plain text or slash commands.
+The persistent panel button opens the Mini App directly when `WEBAPP_URL` is configured. The bot also configures Telegram menu button on startup.
 
 ## Web App
 
