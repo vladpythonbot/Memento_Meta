@@ -1,12 +1,16 @@
 # Memento Meta
 
-Memento Meta is a minimalist Telegram bot for notes, daily tasks, and focus sessions.
+Memento Meta is a minimalist Telegram bot and Telegram Web App for quick task capture and Eisenhower matrix sorting.
 
 ## Concept
 
-Memento Meta helps the user quickly unload thoughts, turn them into tasks, choose a focus method, and see a simple daily summary.
+The bot works like a lightweight inbox: send any text to Telegram, and it becomes an open task. The Web App is the workspace for sorting tasks into a 2x2 matrix, marking tasks done, and deleting noise.
 
-The product idea is not to copy a heavy task manager inside Telegram. Memento Meta should feel calm, fast, and useful in ordinary daily work.
+The product deliberately avoids heavy task-manager mechanics and overloaded menus. The core flow is:
+
+```text
+text message -> inbox -> matrix -> done/delete
+```
 
 ## Naming
 
@@ -14,51 +18,29 @@ Display name: `Memento Meta`
 
 Telegram username: `memento_meta_bot`
 
-## MVP Scope
+## Scope
 
-- Quick notes.
-- Saved Messages-style text capture.
-- Web App task capture.
-- Today tasks.
-- Task completion.
-- Eisenhower matrix for task prioritization.
-- Managed focus sessions.
-- Daily summary.
+- Free-text task capture in Telegram.
+- Multi-line messages become multiple tasks.
+- Persistent one-button bot panel.
+- Telegram Web App task workspace.
+- Inbox area for unsorted tasks.
+- Eisenhower 2x2 matrix.
+- Drag-and-drop between inbox and quadrants.
+- Task completion and deletion.
+- Daily and weekly task summaries.
 - Russian interface.
 - English code and database fields.
 
-## First Screen
+## Bot UI
 
 - `🧭 Панель`
-- `📝 Записать`
 
-## Focus Methods
+Everything else is intentionally handled by plain text or slash commands.
 
-- Pomodoro: 25 minutes.
-- Short Focus: 15 minutes.
-- Deep Work: 90 minutes.
+## Web App
 
-## Time Management Methods
-
-- Eisenhower matrix: important/urgent task sorting.
-- Telegram Web App matrix: visual 2x2 task board with quick task capture.
-
-## Version 2 Direction
-
-- Eisenhower matrix as a first-class screen.
-- Focus session status.
-- Animated focus progress message.
-- Manual focus finish/cancel actions.
-- Protection from running several focus sessions at the same time.
-- Saved notes screen.
-- Deleting saved notes.
-- Weekly review with a suggested next step.
-
-## Telegram Web App
-
-The v4 panel runs as a Telegram Web App at `/app`. The bot stays minimal, while the Web App becomes the main workspace with three modes: Today, Matrix, and Focus.
-
-V4.1 adds task deletion, a true square Eisenhower matrix, a separate inbox area, cleaner empty states, and a simpler two-button bot panel.
+The panel runs at `/app` and `/matrix`.
 
 Set this variable in Railway:
 

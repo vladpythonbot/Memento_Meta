@@ -1,6 +1,7 @@
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
@@ -19,27 +20,19 @@ class Task:
     urgent: bool | None = None
 
 
-@dataclass(frozen=True)
-class Note:
-    id: int
-    user_id: int
-    body: str
-    created_at: str
-
-
-@dataclass(frozen=True)
-class FocusSession:
-    id: int
-    user_id: int
-    method: str
-    duration_minutes: int
-    status: str
-    started_at: str
-    finished_at: str | None
-
-
 def utc_now() -> str:
     return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+
+
+def local_day_bounds_utc(day: dt.date | None = None, timezone: str = DEFAULT_TIMEZONE) -> tuple[str, str]:
+    tz = ZoneInfo(timezone)
+    local_day = day or dt.datetime.now(tz).date()
+    start_local = dt.datetime.combine(local_day, dt.time.min, tzinfo=tz)
+    end_local = start_local + dt.timedelta(days=1)
+    return (
+        start_local.astimezone(dt.UTC).isoformat(timespec="seconds"),
+        end_local.astimezone(dt.UTC).isoformat(timespec="seconds"),
+    )
 
 
 async def init_db() -> None:
@@ -51,14 +44,6 @@ async def init_db() -> None:
                 user_id INTEGER PRIMARY KEY,
                 first_name TEXT,
                 timezone TEXT NOT NULL DEFAULT 'Europe/Kyiv',
-                created_at TEXT NOT NULL
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                body TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
         """)
@@ -76,17 +61,6 @@ async def init_db() -> None:
         """)
         await ensure_column(db, "tasks", "important", "INTEGER")
         await ensure_column(db, "tasks", "urgent", "INTEGER")
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS focus_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                method TEXT NOT NULL,
-                duration_minutes INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'started',
-                started_at TEXT NOT NULL,
-                finished_at TEXT
-            )
-        """)
         await db.commit()
 
 
@@ -107,26 +81,6 @@ async def ensure_user(user_id: int, first_name: str | None = None) -> None:
                 first_name = excluded.first_name
         """, (user_id, first_name, DEFAULT_TIMEZONE, utc_now()))
         await db.commit()
-
-
-async def add_note(user_id: int, body: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "INSERT INTO notes (user_id, body, created_at) VALUES (?, ?, ?)",
-            (user_id, body, utc_now()),
-        )
-        await db.commit()
-        return int(cursor.lastrowid)
-
-
-async def delete_note(user_id: int, note_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "DELETE FROM notes WHERE id = ? AND user_id = ?",
-            (note_id, user_id),
-        )
-        await db.commit()
-        return cursor.rowcount > 0
 
 
 async def add_task(user_id: int, title: str) -> int:
@@ -196,7 +150,7 @@ async def get_open_tasks(user_id: int, limit: int = 10) -> list[Task]:
     return [row_to_task(row) for row in rows]
 
 
-async def get_matrix_tasks(user_id: int, limit: int = 40) -> list[Task]:
+async def get_matrix_tasks(user_id: int, limit: int = 80) -> list[Task]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             SELECT id, user_id, title, status, created_at, completed_at, important, urgent
@@ -204,10 +158,10 @@ async def get_matrix_tasks(user_id: int, limit: int = 40) -> list[Task]:
             WHERE user_id = ? AND status = 'open'
             ORDER BY
                 CASE
-                    WHEN important = 1 AND urgent = 1 THEN 0
-                    WHEN important = 1 AND urgent = 0 THEN 1
-                    WHEN important = 0 AND urgent = 1 THEN 2
-                    WHEN important = 0 AND urgent = 0 THEN 3
+                    WHEN important IS NULL OR urgent IS NULL THEN 0
+                    WHEN important = 1 AND urgent = 1 THEN 1
+                    WHEN important = 1 AND urgent = 0 THEN 2
+                    WHEN important = 0 AND urgent = 1 THEN 3
                     ELSE 4
                 END,
                 id DESC
@@ -253,161 +207,72 @@ def row_to_task(row) -> Task:
     )
 
 
-async def get_recent_notes(user_id: int, limit: int = 5) -> list[Note]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            SELECT id, user_id, body, created_at
-            FROM notes
-            WHERE user_id = ?
-            ORDER BY id DESC
-            LIMIT ?
-        """, (user_id, limit))
-        rows = await cursor.fetchall()
-
-    return [Note(*row) for row in rows]
-
-
-async def start_focus_session(user_id: int, method: str, duration_minutes: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            INSERT INTO focus_sessions (user_id, method, duration_minutes, status, started_at)
-            VALUES (?, ?, ?, 'started', ?)
-        """, (user_id, method, duration_minutes, utc_now()))
-        await db.commit()
-        return int(cursor.lastrowid)
-
-
-async def get_active_focus_session(user_id: int) -> FocusSession | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            SELECT id, user_id, method, duration_minutes, status, started_at, finished_at
-            FROM focus_sessions
-            WHERE user_id = ? AND status = 'started'
-            ORDER BY id DESC
-            LIMIT 1
-        """, (user_id,))
-        row = await cursor.fetchone()
-
-    return FocusSession(*row) if row else None
-
-
-async def finish_focus_session(user_id: int, session_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            UPDATE focus_sessions
-            SET status = 'done', finished_at = ?
-            WHERE id = ? AND user_id = ? AND status = 'started'
-        """, (utc_now(), session_id, user_id))
-        await db.commit()
-        return cursor.rowcount > 0
-
-
-async def cancel_focus_session(user_id: int, session_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
-            UPDATE focus_sessions
-            SET status = 'cancelled', finished_at = ?
-            WHERE id = ? AND user_id = ? AND status = 'started'
-        """, (utc_now(), session_id, user_id))
-        await db.commit()
-        return cursor.rowcount > 0
-
-
 async def get_daily_summary(user_id: int) -> dict[str, int]:
-    today = dt.datetime.now(dt.UTC).date().isoformat()
+    start, end = local_day_bounds_utc()
 
     async with aiosqlite.connect(DB_PATH) as db:
         done_tasks = await count_query(
             db,
-            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'done' AND completed_at LIKE ?",
-            (user_id, f"{today}%"),
+            """
+            SELECT COUNT(*) FROM tasks
+            WHERE user_id = ? AND status = 'done' AND completed_at >= ? AND completed_at < ?
+            """,
+            (user_id, start, end),
+        )
+        created_tasks = await count_query(
+            db,
+            "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND created_at >= ? AND created_at < ?",
+            (user_id, start, end),
         )
         open_tasks = await count_query(
             db,
             "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'open'",
             (user_id,),
         )
-        notes = await count_query(
-            db,
-            "SELECT COUNT(*) FROM notes WHERE user_id = ? AND created_at LIKE ?",
-            (user_id, f"{today}%"),
-        )
-        focus_minutes = await count_query(
-            db,
-            """
-            SELECT COALESCE(SUM(duration_minutes), 0)
-            FROM focus_sessions
-            WHERE user_id = ? AND status = 'done' AND finished_at LIKE ?
-            """,
-            (user_id, f"{today}%"),
-        )
 
     return {
         "done_tasks": done_tasks,
+        "created_tasks": created_tasks,
         "open_tasks": open_tasks,
-        "notes": notes,
-        "focus_minutes": focus_minutes,
     }
 
 
 async def get_period_summary(user_id: int, days: int = 7) -> dict:
-    today = dt.datetime.now(dt.UTC).date()
-    start = today - dt.timedelta(days=days - 1)
-    start_prefix = start.isoformat()
+    today = dt.datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).date()
+    start_day = today - dt.timedelta(days=days - 1)
+    start, _ = local_day_bounds_utc(start_day)
 
     async with aiosqlite.connect(DB_PATH) as db:
         done_tasks = await count_query(
             db,
             "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'done' AND completed_at >= ?",
-            (user_id, start_prefix),
+            (user_id, start),
         )
         created_tasks = await count_query(
             db,
             "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND created_at >= ?",
-            (user_id, start_prefix),
-        )
-        notes = await count_query(
-            db,
-            "SELECT COUNT(*) FROM notes WHERE user_id = ? AND created_at >= ?",
-            (user_id, start_prefix),
-        )
-        focus_minutes = await count_query(
-            db,
-            """
-            SELECT COALESCE(SUM(duration_minutes), 0)
-            FROM focus_sessions
-            WHERE user_id = ? AND status = 'done' AND finished_at >= ?
-            """,
-            (user_id, start_prefix),
+            (user_id, start),
         )
 
     daily = []
-    for offset in range(days):
-        day = start + dt.timedelta(days=offset)
-        prefix = day.isoformat()
-        async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(DB_PATH) as db:
+        for offset in range(days):
+            day = start_day + dt.timedelta(days=offset)
+            day_start, day_end = local_day_bounds_utc(day)
             day_done = await count_query(
                 db,
-                "SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'done' AND completed_at LIKE ?",
-                (user_id, f"{prefix}%"),
-            )
-            day_focus = await count_query(
-                db,
                 """
-                SELECT COALESCE(SUM(duration_minutes), 0)
-                FROM focus_sessions
-                WHERE user_id = ? AND status = 'done' AND finished_at LIKE ?
+                SELECT COUNT(*) FROM tasks
+                WHERE user_id = ? AND status = 'done' AND completed_at >= ? AND completed_at < ?
                 """,
-                (user_id, f"{prefix}%"),
+                (user_id, day_start, day_end),
             )
-        daily.append({"date": prefix, "done_tasks": day_done, "focus_minutes": day_focus})
+            daily.append({"date": day.isoformat(), "done_tasks": day_done})
 
     return {
         "days": days,
         "done_tasks": done_tasks,
         "created_tasks": created_tasks,
-        "notes": notes,
-        "focus_minutes": focus_minutes,
         "daily": daily,
     }
 
