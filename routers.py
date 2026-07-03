@@ -8,6 +8,7 @@ from config import WEBAPP_URL
 from db import (
     add_task,
     complete_task,
+    delete_task,
     ensure_user,
     get_daily_summary,
     get_matrix_tasks,
@@ -147,7 +148,7 @@ async def review(message: types.Message):
     await message.answer(build_review_text(data, next_task), parse_mode="HTML")
 
 
-async def build_today_view(user_id: int, completed_task=None):
+async def build_today_view(user_id: int, completed_task=None, deleted_task=None):
     tasks = await get_open_tasks(user_id, limit=10)
     summary = await get_daily_summary(user_id)
 
@@ -156,9 +157,12 @@ async def build_today_view(user_id: int, completed_task=None):
     if completed_task:
         lines.append(f"☑ <s>{escape(completed_task.title)}</s>")
         lines.append("")
+    if deleted_task:
+        lines.append(f"🗑 <s>{escape(deleted_task.title)}</s>")
+        lines.append("")
 
     if tasks:
-        lines.append("Нажми на задачу ниже, чтобы закрыть её.")
+        lines.append("Нажми на задачу, чтобы закрыть. Мусор убирай через 🗑.")
     else:
         lines.append("Открытых задач нет. Просто напиши новую задачу сообщением.")
 
@@ -171,7 +175,10 @@ def build_tasks_keyboard(tasks) -> types.InlineKeyboardMarkup | None:
     rows = []
     for task in tasks:
         title = compact_button_text(task.title)
-        rows.append([types.InlineKeyboardButton(text=f"☐ {title}", callback_data=f"task_done:{task.id}")])
+        rows.append([
+            types.InlineKeyboardButton(text=f"☐ {title}", callback_data=f"task_done:{task.id}"),
+            types.InlineKeyboardButton(text="🗑", callback_data=f"task_delete:{task.id}"),
+        ])
 
     url = app_url(WEBAPP_URL or None)
     if url:
@@ -182,7 +189,7 @@ def build_tasks_keyboard(tasks) -> types.InlineKeyboardMarkup | None:
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def compact_button_text(text: str, limit: int = 58) -> str:
+def compact_button_text(text: str, limit: int = 50) -> str:
     clean = " ".join(text.split())
     if len(clean) <= limit:
         return clean
@@ -256,6 +263,22 @@ async def task_done(callback: types.CallbackQuery):
     text, reply_markup = await build_today_view(callback.from_user.id, completed_task=completed_task)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
     await callback.answer("Готово")
+
+
+@router.callback_query(F.data.startswith("task_delete:"))
+async def task_delete(callback: types.CallbackQuery):
+    task_id = int(callback.data.split(":", 1)[1])
+    current_tasks = await get_open_tasks(callback.from_user.id, limit=200)
+    deleted_task = next((task for task in current_tasks if task.id == task_id), None)
+    deleted = await delete_task(callback.from_user.id, task_id)
+
+    if not deleted:
+        await callback.answer("Задача уже удалена или не найдена.", show_alert=True)
+        return
+
+    text, reply_markup = await build_today_view(callback.from_user.id, deleted_task=deleted_task)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
+    await callback.answer("Удалено")
 
 
 @router.callback_query(F.data.startswith("matrix_set:"))
