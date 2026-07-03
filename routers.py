@@ -4,21 +4,15 @@ from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from config import WEBAPP_URL
 from db import (
     add_task,
-    complete_task,
-    delete_task,
     ensure_user,
     get_daily_summary,
     get_matrix_tasks,
     get_next_action_task,
     get_open_tasks,
     get_period_summary,
-    update_task_matrix,
 )
-from keyboards import BTN_APP, app_links_keyboard, app_url, main_keyboard
-
 
 router = Router()
 DAY_BAR = "▁▂▃▄▅▆▇█"
@@ -50,15 +44,13 @@ async def save_quick_tasks(message: types.Message, state: FSMContext, text: str,
     if len(task_ids) == 1:
         await message.answer(
             f"Добавил во входящие:\n\n<b>{escape(items[0])}</b>",
-            parse_mode="HTML",
-            reply_markup=app_links_keyboard(WEBAPP_URL or None),
+            parse_mode="HTML"
         )
         return
 
     await message.answer(
         f"Добавил во входящие: <b>{len(task_ids)}</b>\n\nРазберёшь их в панели.",
-        parse_mode="HTML",
-        reply_markup=app_links_keyboard(WEBAPP_URL or None),
+        parse_mode="HTML"
     )
 
 
@@ -72,15 +64,8 @@ async def start(message: types.Message, state: FSMContext):
         f"Привет, {escape(name)}.\n\n"
         "Я Memento Meta.\n\n"
         "Просто пиши сюда задачи, мысли или список. Я сложу всё во входящие, а разбор живёт в панели.",
-        reply_markup=main_keyboard,
+        reply_markup=types.ReplyKeyboardRemove(),
     )
-
-
-@router.message(F.text == BTN_APP)
-async def app_home(message: types.Message):
-    await ensure_user(message.from_user.id, message.from_user.first_name)
-    text, reply_markup = await build_today_view(message.from_user.id)
-    await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
 
 
 @router.message(Command("help"))
@@ -115,15 +100,15 @@ async def quick_task(message: types.Message, state: FSMContext):
 @router.message(Command("today"))
 async def today(message: types.Message):
     await ensure_user(message.from_user.id, message.from_user.first_name)
-    text, reply_markup = await build_today_view(message.from_user.id)
-    await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+    text = await build_today_view(message.from_user.id)
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("matrix", "eisenhower"))
 async def matrix(message: types.Message):
     await ensure_user(message.from_user.id, message.from_user.first_name)
-    text, reply_markup = await build_matrix_view(message.from_user.id)
-    await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+    text = await build_matrix_view(message.from_user.id)
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("summary"))
@@ -135,8 +120,7 @@ async def summary(message: types.Message):
         f"Добавлено: <b>{data['created_tasks']}</b>\n"
         f"Готово: <b>{data['done_tasks']}</b>\n"
         f"Открыто всего: <b>{data['open_tasks']}</b>",
-        parse_mode="HTML",
-        reply_markup=app_links_keyboard(WEBAPP_URL or None),
+        parse_mode="HTML"
     )
 
 
@@ -148,52 +132,21 @@ async def review(message: types.Message):
     await message.answer(build_review_text(data, next_task), parse_mode="HTML")
 
 
-async def build_today_view(user_id: int, completed_task=None, deleted_task=None):
+async def build_today_view(user_id: int) -> str:
     tasks = await get_open_tasks(user_id, limit=10)
     summary = await get_daily_summary(user_id)
 
     lines = ["📝 <b>Задачи</b>", ""]
 
-    if completed_task:
-        lines.append(f"☑ <s>{escape(completed_task.title)}</s>")
-        lines.append("")
-    if deleted_task:
-        lines.append(f"🗑 <s>{escape(deleted_task.title)}</s>")
-        lines.append("")
-
     if tasks:
-        lines.append("Нажми на задачу, чтобы закрыть. Мусор убирай через 🗑.")
+        for task in tasks:
+            lines.append(f"• {escape(task.title)}")
     else:
         lines.append("Открытых задач нет. Просто напиши новую задачу сообщением.")
 
     lines.append("")
     lines.append(f"Итог: {summary['done_tasks']} готово · {summary['created_tasks']} добавлено сегодня")
-    return "\n".join(lines), build_tasks_keyboard(tasks)
-
-
-def build_tasks_keyboard(tasks) -> types.InlineKeyboardMarkup | None:
-    rows = []
-    for task in tasks:
-        title = compact_button_text(task.title)
-        rows.append([
-            types.InlineKeyboardButton(text=f"☐ {title}", callback_data=f"task_done:{task.id}"),
-            types.InlineKeyboardButton(text="🗑", callback_data=f"task_delete:{task.id}"),
-        ])
-
-    url = app_url(WEBAPP_URL or None)
-    if url:
-        rows.append([types.InlineKeyboardButton(text="Открыть Mini App", web_app=types.WebAppInfo(url=url))])
-
-    if not rows:
-        return None
-    return types.InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def compact_button_text(text: str, limit: int = 50) -> str:
-    clean = " ".join(text.split())
-    if len(clean) <= limit:
-        return clean
-    return f"{clean[:limit - 1].rstrip()}…"
+    return "\n".join(lines)
 
 
 async def build_matrix_view(user_id: int):
@@ -205,7 +158,7 @@ async def build_matrix_view(user_id: int):
             "🧭 <b>Матрица</b>",
             "",
             "Открытых задач пока нет. Просто напиши задачу в чат.",
-        ]), app_links_keyboard(WEBAPP_URL or None)
+        ])
 
     lines = [
         "🧭 <b>Матрица</b>",
@@ -218,7 +171,7 @@ async def build_matrix_view(user_id: int):
         "",
         "Открой панель, чтобы перетаскивать задачи.",
     ]
-    return "\n".join(lines), app_links_keyboard(WEBAPP_URL or None)
+    return "\n".join(lines)
 
 
 def matrix_badge(task) -> str:
@@ -247,64 +200,6 @@ def count_matrix_tasks(tasks) -> dict[str, int]:
         else:
             counts["inbox"] += 1
     return counts
-
-
-@router.callback_query(F.data.startswith("task_done:"))
-async def task_done(callback: types.CallbackQuery):
-    task_id = int(callback.data.split(":", 1)[1])
-    current_tasks = await get_open_tasks(callback.from_user.id, limit=200)
-    completed_task = next((task for task in current_tasks if task.id == task_id), None)
-    done = await complete_task(callback.from_user.id, task_id)
-
-    if not done:
-        await callback.answer("Задача уже закрыта или не найдена.", show_alert=True)
-        return
-
-    text, reply_markup = await build_today_view(callback.from_user.id, completed_task=completed_task)
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
-    await callback.answer("Готово")
-
-
-@router.callback_query(F.data.startswith("task_delete:"))
-async def task_delete(callback: types.CallbackQuery):
-    task_id = int(callback.data.split(":", 1)[1])
-    current_tasks = await get_open_tasks(callback.from_user.id, limit=200)
-    deleted_task = next((task for task in current_tasks if task.id == task_id), None)
-    deleted = await delete_task(callback.from_user.id, task_id)
-
-    if not deleted:
-        await callback.answer("Задача уже удалена или не найдена.", show_alert=True)
-        return
-
-    text, reply_markup = await build_today_view(callback.from_user.id, deleted_task=deleted_task)
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
-    await callback.answer("Удалено")
-
-
-@router.callback_query(F.data.startswith("matrix_set:"))
-async def matrix_set(callback: types.CallbackQuery):
-    _, raw_task_id, quadrant = callback.data.split(":", 2)
-    task_id = int(raw_task_id)
-    mapping = {
-        "do": (True, True),
-        "plan": (True, False),
-        "delegate": (False, True),
-        "drop": (False, False),
-    }
-
-    if quadrant not in mapping:
-        await callback.answer("Неизвестный квадрант.", show_alert=True)
-        return
-
-    important, urgent = mapping[quadrant]
-    updated = await update_task_matrix(callback.from_user.id, task_id, important, urgent)
-    if not updated:
-        await callback.answer("Задача не найдена или уже закрыта.", show_alert=True)
-        return
-
-    text, reply_markup = await build_matrix_view(callback.from_user.id)
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
-    await callback.answer()
 
 
 def build_review_text(data: dict, next_task) -> str:
