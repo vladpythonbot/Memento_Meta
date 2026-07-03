@@ -15,10 +15,7 @@ def app_url(webapp_url: str | None = None) -> str | None:
 
 
 def panel_button() -> KeyboardButton:
-    url = app_url()
-    if not url:
-        return KeyboardButton(text=BTN_APP)
-    return KeyboardButton(text=BTN_APP, web_app=WebAppInfo(url=url))
+    return KeyboardButton(text=BTN_APP)
 
 
 main_keyboard = ReplyKeyboardMarkup(

@@ -16,7 +16,7 @@ from db import (
     get_period_summary,
     update_task_matrix,
 )
-from keyboards import BTN_APP, app_links_keyboard, main_keyboard
+from keyboards import BTN_APP, app_links_keyboard, app_url, main_keyboard
 
 
 router = Router()
@@ -32,7 +32,7 @@ def split_capture_items(text: str) -> list[str]:
     return [item for item in items if len(item) >= 2]
 
 
-async def save_quick_tasks(message: types.Message, state: FSMContext, text: str):
+async def save_quick_tasks(message: types.Message, state: FSMContext, text: str, silent: bool = False):
     if len(text) < 2:
         await message.answer("Слишком коротко. Напиши чуть подробнее.")
         return
@@ -42,6 +42,9 @@ async def save_quick_tasks(message: types.Message, state: FSMContext, text: str)
 
     items = split_capture_items(text) or [text]
     task_ids = [await add_task(message.from_user.id, item[:500]) for item in items]
+
+    if silent:
+        return
 
     if len(task_ids) == 1:
         await message.answer(
@@ -75,15 +78,8 @@ async def start(message: types.Message, state: FSMContext):
 @router.message(F.text == BTN_APP)
 async def app_home(message: types.Message):
     await ensure_user(message.from_user.id, message.from_user.first_name)
-    summary = await get_daily_summary(message.from_user.id)
-    await message.answer(
-        "🧭 <b>Панель</b>\n\n"
-        f"Открыто: <b>{summary['open_tasks']}</b>\n"
-        f"Сегодня добавлено: <b>{summary['created_tasks']}</b>\n"
-        f"Сегодня готово: <b>{summary['done_tasks']}</b>",
-        parse_mode="HTML",
-        reply_markup=app_links_keyboard(WEBAPP_URL or None),
-    )
+    text, reply_markup = await build_today_view(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
 
 
 @router.message(Command("help"))
@@ -112,7 +108,7 @@ async def quick_task(message: types.Message, state: FSMContext):
         await message.answer("Напиши так: <code>/task разобрать почту</code>", parse_mode="HTML")
         return
 
-    await save_quick_tasks(message, state, text)
+    await save_quick_tasks(message, state, text, silent=True)
 
 
 @router.message(Command("today"))
@@ -151,28 +147,46 @@ async def review(message: types.Message):
     await message.answer(build_review_text(data, next_task), parse_mode="HTML")
 
 
-async def build_today_view(user_id: int):
-    tasks = await get_open_tasks(user_id, limit=7)
+async def build_today_view(user_id: int, completed_task=None):
+    tasks = await get_open_tasks(user_id, limit=10)
     summary = await get_daily_summary(user_id)
-    next_task = await get_next_action_task(user_id)
 
-    lines = ["📅 <b>Сегодня</b>", ""]
+    lines = ["📝 <b>Задачи</b>", ""]
 
-    if next_task:
-        lines.append("<b>Первым делом</b>")
-        lines.append(f"{matrix_badge(next_task)} {escape(next_task.title)}")
+    if completed_task:
+        lines.append(f"☑ <s>{escape(completed_task.title)}</s>")
         lines.append("")
 
     if tasks:
-        lines.append("<b>Открытые задачи</b>")
-        for task in tasks:
-            lines.append(f"• {escape(task.title)}")
+        lines.append("Нажми на задачу ниже, чтобы закрыть её.")
     else:
-        lines.append("Открытых задач пока нет.")
+        lines.append("Открытых задач нет. Просто напиши новую задачу сообщением.")
 
     lines.append("")
-    lines.append(f"Итог: {summary['done_tasks']} готово · {summary['created_tasks']} добавлено")
-    return "\n".join(lines), app_links_keyboard(WEBAPP_URL or None)
+    lines.append(f"Итог: {summary['done_tasks']} готово · {summary['created_tasks']} добавлено сегодня")
+    return "\n".join(lines), build_tasks_keyboard(tasks)
+
+
+def build_tasks_keyboard(tasks) -> types.InlineKeyboardMarkup | None:
+    rows = []
+    for task in tasks:
+        title = compact_button_text(task.title)
+        rows.append([types.InlineKeyboardButton(text=f"☐ {title}", callback_data=f"task_done:{task.id}")])
+
+    url = app_url(WEBAPP_URL or None)
+    if url:
+        rows.append([types.InlineKeyboardButton(text="Открыть Mini App", web_app=types.WebAppInfo(url=url))])
+
+    if not rows:
+        return None
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def compact_button_text(text: str, limit: int = 58) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= limit:
+        return clean
+    return f"{clean[:limit - 1].rstrip()}…"
 
 
 async def build_matrix_view(user_id: int):
@@ -231,15 +245,17 @@ def count_matrix_tasks(tasks) -> dict[str, int]:
 @router.callback_query(F.data.startswith("task_done:"))
 async def task_done(callback: types.CallbackQuery):
     task_id = int(callback.data.split(":", 1)[1])
+    current_tasks = await get_open_tasks(callback.from_user.id, limit=200)
+    completed_task = next((task for task in current_tasks if task.id == task_id), None)
     done = await complete_task(callback.from_user.id, task_id)
 
     if not done:
         await callback.answer("Задача уже закрыта или не найдена.", show_alert=True)
         return
 
-    text, reply_markup = await build_today_view(callback.from_user.id)
+    text, reply_markup = await build_today_view(callback.from_user.id, completed_task=completed_task)
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
-    await callback.answer()
+    await callback.answer("Готово")
 
 
 @router.callback_query(F.data.startswith("matrix_set:"))
@@ -330,4 +346,4 @@ async def free_text(message: types.Message, state: FSMContext):
         await message.answer("Не знаю такую команду. Нажми /help.")
         return
 
-    await save_quick_tasks(message, state, text)
+    await save_quick_tasks(message, state, text, silent=True)
