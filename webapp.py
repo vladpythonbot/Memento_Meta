@@ -187,30 +187,32 @@ APP_HTML = """
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg: #f7f3ea;
-      --ink: #171717;
-      --muted: #6d665d;
-      --line: #ded2c2;
+      --bg: #f6f1e8;
+      --paper: #fffdf8;
+      --paper-soft: #fbf5ea;
+      --ink: #181713;
+      --muted: #756d62;
+      --line: #ded4c5;
       --card: #fffdf8;
-      --accent: #1f7a5a;
-      --urgent: #ef9d77;
-      --plan: #77b98f;
-      --delegate: #8aa9de;
-      --drop: #bfb4a4;
-      --danger: #cf6655;
-      --shadow: 0 10px 28px rgba(37, 29, 19, .08);
+      --accent: #2d6f56;
+      --now: #3c8f6a;
+      --plan: #5277b8;
+      --materials: #c18b3d;
+      --archive: #9a9186;
+      --danger: #c95f50;
+      --shadow: 0 14px 34px rgba(37, 29, 19, .09);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       min-height: 100vh;
-      background: linear-gradient(180deg, #fffaf2 0%, var(--bg) 100%);
+      background: radial-gradient(circle at top left, #fff8ea 0, var(--bg) 340px, #efe7dc 100%);
       color: var(--ink);
       font: 15px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    .app { max-width: 1180px; margin: 0 auto; padding: 14px; }
-    header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; margin-bottom: 12px; }
-    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    .app { max-width: 1240px; margin: 0 auto; padding: 16px; }
+    header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; margin-bottom: 14px; }
+    h1 { margin: 0; font-size: 25px; letter-spacing: 0; }
     .hint { color: var(--muted); margin: 4px 0 0; }
     .composer, .panel, .cell, .metric {
       background: var(--card);
@@ -218,13 +220,13 @@ APP_HTML = """
       border-radius: 8px;
       box-shadow: var(--shadow);
     }
-    .composer { padding: 10px; margin-bottom: 10px; }
+    .composer { padding: 11px; margin-bottom: 10px; }
     .input-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
     input {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 7px;
-      background: #fff;
+      background: var(--paper);
       color: var(--ink);
       padding: 11px 12px;
       font: inherit;
@@ -246,9 +248,9 @@ APP_HTML = """
     .metric { padding: 9px; box-shadow: none; }
     .metric b { display: block; font-size: 21px; line-height: 1; }
     .metric span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .workspace { display: grid; grid-template-columns: minmax(250px, .85fr) minmax(0, 1.5fr); gap: 12px; }
-    .panel { padding: 12px; }
-    .panel-title { font-weight: 900; font-size: 17px; margin-bottom: 4px; }
+    .workspace { display: grid; grid-template-columns: minmax(280px, .78fr) minmax(0, 1.55fr); gap: 12px; align-items: start; }
+    .panel { padding: 13px; position: sticky; top: 12px; }
+    .panel-title { font-weight: 900; font-size: 18px; margin-bottom: 4px; }
     .muted { color: var(--muted); }
     .list { margin-top: 10px; }
     .task {
@@ -257,7 +259,7 @@ APP_HTML = """
       border: 1px solid var(--line);
       border-left: 4px solid var(--line);
       border-radius: 7px;
-      background: #fff;
+      background: var(--paper);
       padding: 10px;
       margin: 7px 0;
       color: var(--ink);
@@ -268,10 +270,10 @@ APP_HTML = """
       user-select: none;
     }
     .task:active { cursor: grabbing; }
-    .task[data-q="do"] { border-left-color: var(--urgent); }
+    .task[data-q="do"] { border-left-color: var(--now); }
     .task[data-q="plan"] { border-left-color: var(--plan); }
-    .task[data-q="delegate"] { border-left-color: var(--delegate); }
-    .task[data-q="drop"] { border-left-color: var(--drop); }
+    .task[data-q="delegate"] { border-left-color: var(--materials); }
+    .task[data-q="drop"] { border-left-color: var(--archive); }
     .task.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31,122,90,.14); }
     .task.dragging { opacity: .35; }
     .task-ghost {
@@ -289,7 +291,7 @@ APP_HTML = """
     .action {
       border: 1px solid var(--line);
       border-radius: 7px;
-      background: #fff;
+      background: var(--paper);
       padding: 8px;
       font: inherit;
       font-weight: 850;
@@ -298,24 +300,27 @@ APP_HTML = """
     .action.done { background: var(--accent); border-color: var(--accent); color: #fff; }
     .action.delete { color: var(--danger); border-color: rgba(207,102,85,.45); }
     .matrix { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .cell { min-height: 235px; padding: 11px; }
-    .cell[data-q="do"] { border-top: 5px solid var(--urgent); }
+    .cell { min-height: 245px; padding: 12px; background: linear-gradient(180deg, var(--paper) 0%, #fffaf1 100%); }
+    .cell[data-q="do"] { border-top: 5px solid var(--now); }
     .cell[data-q="plan"] { border-top: 5px solid var(--plan); }
-    .cell[data-q="delegate"] { border-top: 5px solid var(--delegate); }
-    .cell[data-q="drop"] { border-top: 5px solid var(--drop); }
-    .cell.drop-target, .panel.drop-target { background: #f4fff6; border-color: rgba(31,122,90,.55); }
-    .cell-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-    .cell-title { font-weight: 900; }
-    .count { color: var(--muted); font-size: 13px; }
+    .cell[data-q="delegate"] { border-top: 5px solid var(--materials); }
+    .cell[data-q="drop"] { border-top: 5px solid var(--archive); }
+    .cell.drop-target, .panel.drop-target { background: #f3fbf4; border-color: rgba(45,111,86,.6); transform: translateY(-1px); }
+    .cell-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+    .cell-title { font-weight: 950; font-size: 16px; }
+    .count { color: var(--muted); font-size: 12px; }
     .empty { color: var(--muted); padding: 10px 0; }
+    .board-kicker { margin: 0 0 8px; color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+    .panel .board-kicker { margin-bottom: 6px; }
     @media (max-width: 760px) {
       .app { padding: 10px; }
       header { display: block; }
       h1 { font-size: 22px; }
       .input-row, .workspace { grid-template-columns: 1fr; }
+      .panel { position: static; }
       .summary { grid-template-columns: repeat(3, minmax(74px, 1fr)); }
-      .matrix { grid-template-columns: repeat(2, minmax(145px, 1fr)); overflow-x: auto; }
-      .cell { min-height: 180px; padding: 9px; }
+      .matrix { grid-template-columns: repeat(2, minmax(148px, 1fr)); overflow-x: auto; }
+      .cell { min-height: 178px; padding: 9px; }
       .task { padding: 9px; font-size: 14px; }
     }
   </style>
@@ -325,14 +330,14 @@ APP_HTML = """
     <header>
       <div>
         <h1>Memento Meta</h1>
-        <p class="hint">Быстрый входящие → матрица → готово.</p>
+        <p class="hint">Собери мысли во входящие, потом разложи по действиям.</p>
       </div>
     </header>
 
     <section class="composer">
       <div class="input-row">
-        <input id="taskInput" maxlength="500" placeholder="Новая задача">
-        <button class="primary" id="addTask">Добавить</button>
+        <input id="taskInput" maxlength="500" placeholder="Идея, задача, текст или ссылка">
+        <button class="primary" id="addTask">Во входящие</button>
       </div>
     </section>
 
@@ -340,11 +345,12 @@ APP_HTML = """
 
     <section class="workspace">
       <section class="panel" id="incomingPanel">
+        <div class="board-kicker">Сбор</div>
         <div class="panel-title">Входящие</div>
-        <div class="muted">Новые задачи. Перетащи в матрицу или оставь на потом.</div>
+        <div class="muted">Идеи, скрины, тексты и задачи. Разбери, когда будет момент.</div>
         <div class="list" id="incomingList"></div>
       </section>
-      <section class="matrix" id="matrixGrid"></section>
+      <section><div class="board-kicker">GTD</div><section class="matrix" id="matrixGrid"></section></section>
     </section>
   </main>
 
@@ -354,14 +360,20 @@ APP_HTML = """
     tg?.expand();
 
     const labels = {
-      do: ["Сделать", "важно и срочно"],
-      plan: ["План", "важно, не срочно"],
-      delegate: ["Делегировать", "срочно, не важно"],
-      drop: ["Убрать", "не важно и не срочно"],
+      do: ["Сейчас", "то, что реально делать"],
+      plan: ["План", "вернуться позже"],
+      delegate: ["Материалы", "идеи, скрины, тексты"],
+      drop: ["Архив", "хранить без действия"],
       inbox: ["Входящие", "нужно разобрать"]
     };
     const order = ["do", "plan", "delegate", "drop"];
     const dropOrder = ["inbox", ...order];
+    const emptyLabels = {
+      do: "На сейчас ничего нет",
+      plan: "План пустой",
+      delegate: "Материалов нет",
+      drop: "Архив пуст"
+    };
     let tasks = [];
     let selected = null;
 
@@ -394,7 +406,7 @@ APP_HTML = """
 
       const meta = document.createElement("span");
       meta.className = "task-meta";
-      meta.textContent = quadrant(task) === "inbox" ? "из входящих" : labels[quadrant(task)][1];
+      meta.textContent = quadrant(task) === "inbox" ? "ожидает разбора" : labels[quadrant(task)][1];
 
       const actions = document.createElement("div");
       actions.className = "task-actions";
@@ -474,8 +486,8 @@ APP_HTML = """
       const inbox = tasks.filter(task => quadrant(task) === "inbox").length;
       document.getElementById("summary").innerHTML = [
         ["Входящие", inbox],
-        ["Открыто", tasks.length],
-        ["Готово сегодня", summary.done_tasks || 0],
+        ["В доске", tasks.length],
+        ["Закрыто сегодня", summary.done_tasks || 0],
       ].map(([label, value]) => `<div class="metric"><b>${value}</b><span>${label}</span></div>`).join("");
     }
 
